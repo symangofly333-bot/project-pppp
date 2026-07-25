@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Tutorial Guide",
+  "version": "2.1",
+  "description": "Points arrows at real ChatGPT buttons to guide first-time users",
+  "permissions": ["storage"],
+  "action": {},
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["content.js", "chatbot.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

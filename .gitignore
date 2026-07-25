@@ -1,0 +1,14 @@
+# 의존성
+node_modules/
+
+# API 키/비밀 — 절대 커밋 금지
+config.js
+.env
+.env.*
+*.key
+
+# OS/에디터
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
