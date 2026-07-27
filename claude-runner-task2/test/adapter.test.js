@@ -7,8 +7,47 @@ const test = require("node:test");
 const {
   ClaudeAdapterError,
   createRequestBody,
+  extractJson,
   generate,
 } = require("../claude-adapter");
+
+test("extractJson keeps code fences that are part of the JSON value", () => {
+  // clarification_request는 붙여넣기 틀을 값으로 담는다. 펜스 벗기기를 먼저 하면
+  // 이 안쪽을 껍데기로 착각해 응답을 통째로 날린다(라이브에서 실제로 겪은 버그).
+  const text = JSON.stringify({ body: { template: "```\n여기에 코드 붙여넣기\n```" } });
+  assert.deepEqual(extractJson(text), {
+    body: { template: "```\n여기에 코드 붙여넣기\n```" },
+  });
+});
+
+test("extractJson unwraps a fenced or prefixed response", () => {
+  assert.deepEqual(extractJson("```json\n{\"a\":1}\n```"), { a: 1 });
+  assert.deepEqual(extractJson("네, 여기 있습니다:\n{\"a\":2}"), { a: 2 });
+  assert.throws(() => extractJson("JSON이 전혀 없는 응답"), SyntaxError);
+});
+
+test("prompt mode sends the schema as text with its original constraints", () => {
+  const body = createRequestBody("질문", {
+    type: "object",
+    properties: { items: { type: "array", maxItems: 4 } },
+  }, { mode: "prompt" });
+
+  assert.equal(body.output_config, undefined);
+  assert.equal(body.messages.length, 1);
+  // 문법으로 컴파일되지 않으므로 미지원 키워드를 제거하지 않는다.
+  assert.match(body.messages[0].content, /maxItems/);
+});
+
+test("prompt mode replays the failed answer and its violations on retry", () => {
+  const body = createRequestBody("질문", { type: "object" }, {
+    mode: "prompt",
+    priorAttempt: { text: "{\"bad\":true}", violations: ["/body: must have required property 'x'"] },
+  });
+
+  assert.deepEqual(body.messages.map((m) => m.role), ["user", "assistant", "user"]);
+  assert.equal(body.messages[1].content, "{\"bad\":true}");
+  assert.match(body.messages[2].content, /required property 'x'/);
+});
 
 const schema = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, "../../chatbot/schema.v1.json"), "utf8")

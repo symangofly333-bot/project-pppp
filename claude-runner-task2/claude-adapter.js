@@ -165,17 +165,31 @@ function createRequestBody(prompt, schema, options = {}) {
 }
 
 // 구조화 출력이 아닐 때는 모델이 코드펜스나 짧은 머리말을 붙일 수 있다.
+//
+// 통째로 파싱하는 것을 반드시 먼저 시도한다. 응답 자체가 코드펜스를 값으로 담고 있을 수
+// 있기 때문이다(clarification_request의 붙여넣기 틀에서 실제로 발생). 펜스 벗기기를 먼저
+// 하면 멀쩡한 JSON 안쪽의 펜스를 껍데기로 착각해 내용을 잘라내 버린다.
 function extractJson(text) {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = (fenced ? fenced[1] : text).trim();
-  try {
-    return JSON.parse(candidate);
-  } catch (error) {
-    const start = candidate.indexOf("{");
-    const end = candidate.lastIndexOf("}");
-    if (start === -1 || end <= start) throw error;
-    return JSON.parse(candidate.slice(start, end + 1));
+  const trimmed = text.trim();
+  const attempts = [trimmed];
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) attempts.push(fenced[1].trim());
+
+  // 머리말이 붙은 경우: 처음 '{'부터 마지막 '}'까지.
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start !== -1 && end > start) attempts.push(trimmed.slice(start, end + 1));
+
+  let firstError;
+  for (const candidate of attempts) {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      firstError ??= error;
+    }
   }
+  throw firstError ?? new SyntaxError("응답이 비어 있어 JSON을 찾지 못했다.");
 }
 
 function classifyApiError(status, payload) {
