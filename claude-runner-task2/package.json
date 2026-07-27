@@ -8,6 +8,7 @@
     "check": "node offline-check.js",
     "eval": "node run-eval.js",
     "diag": "node test-single-type.js",
+    "pipeline": "node test-pipeline.js",
     "test": "node --test test/*.test.js"
   },
   "engines": {

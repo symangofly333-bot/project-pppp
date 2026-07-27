@@ -69,6 +69,13 @@ body.type 선택 기준:
 모르는 정보는 지어내지 말고 reliability와 clarification 구조로 드러낸다.
 위험한 요청은 안전하게 제한하되, 가능한 안전한 대안을 제공한다.`;
 
+// 프롬프트 방식(mode: "prompt")에서 쓰는 지시문.
+// 큰 4종(code_explanation/procedure/error_diagnosis/code_generation)은 구조화 출력이
+// "compiled grammar too large"로 거부되므로, 스키마를 문법이 아니라 글로 전달한다.
+const JSON_ONLY_INSTRUCTION = `아래 JSON Schema를 정확히 따르는 JSON 하나만 출력한다.
+설명·머리말·코드펜스 없이 JSON 본문만 출력한다.
+required와 additionalProperties를 반드시 지키고, 개수·길이 제한도 지킨다.`;
+
 class ClaudeAdapterError extends Error {
   constructor(message, details = {}) {
     super(message);
@@ -95,7 +102,13 @@ function positiveIntegerFromEnv(name, fallback) {
   return parsed;
 }
 
-function createRequestBody(prompt, schema) {
+/**
+ * @param {object} [options]
+ * @param {"strict"|"prompt"} [options.mode] strict=구조화 출력 강제, prompt=스키마를 글로 전달
+ * @param {{text: string, violations: string[]}} [options.priorAttempt]
+ *        직전 시도가 검증에 실패했을 때, 그 응답과 위반 목록을 넣어 재생성시킨다(prompt 전용).
+ */
+function createRequestBody(prompt, schema, options = {}) {
   if (typeof prompt !== "string" || prompt.trim() === "") {
     throw new ClaudeAdapterError("prompt must be a non-empty string.", {
       category: "configuration_error",
@@ -107,18 +120,40 @@ function createRequestBody(prompt, schema) {
     });
   }
 
+  const base = {
+    model: process.env.CLAUDE_MODEL || DEFAULT_MODEL,
+    max_tokens: positiveIntegerFromEnv("CLAUDE_MAX_TOKENS", DEFAULT_MAX_TOKENS),
+    system: SYSTEM_PROMPT,
+  };
+
+  if (options.mode === "prompt") {
+    // 문법으로 컴파일되지 않으므로 미지원 키워드를 뺄 이유가 없다.
+    // maxItems 같은 제약을 원본 그대로 보여주는 편이 오히려 정확하다.
+    const messages = [{
+      role: "user",
+      content: `${JSON_ONLY_INSTRUCTION}\n\n[JSON Schema]\n${JSON.stringify(schema)}\n\n[질문]\n${prompt}`,
+    }];
+    if (options.priorAttempt) {
+      messages.push({ role: "assistant", content: options.priorAttempt.text });
+      messages.push({
+        role: "user",
+        content: "위 응답은 스키마를 어겼다. 아래를 고쳐서 JSON 전체를 다시 출력한다.\n" +
+          options.priorAttempt.violations.map((v) => `- ${v}`).join("\n"),
+      });
+    }
+    return { ...base, messages };
+  }
+
   // 라이브 진단 결과: Claude 구조화 출력은 maxItems/maxLength/minItems를 거부한다.
   //   "For 'array' type, property 'maxItems' is not supported"
-  // 따라서 미지원 키워드 제거가 기본값이다.
+  // 따라서 미지원 키워드 제거가 기본값이다(제약 자체는 description으로 옮겨 전달된다).
   // CLAUDE_STRIP_UNSUPPORTED=0 으로 두면 원본 그대로 보내는 진단 모드로 되돌릴 수 있다.
   // (AJV 판정은 항상 원본 스키마로 하므로 계약 자체는 그대로 유지된다.)
   const stripForGeneration = process.env.CLAUDE_STRIP_UNSUPPORTED !== "0";
   const schemaForApi = stripForGeneration ? stripUnsupportedKeywords(schema) : schema;
 
   return {
-    model: process.env.CLAUDE_MODEL || DEFAULT_MODEL,
-    max_tokens: positiveIntegerFromEnv("CLAUDE_MAX_TOKENS", DEFAULT_MAX_TOKENS),
-    system: SYSTEM_PROMPT,
+    ...base,
     messages: [{ role: "user", content: prompt }],
     output_config: {
       format: {
@@ -127,6 +162,20 @@ function createRequestBody(prompt, schema) {
       },
     },
   };
+}
+
+// 구조화 출력이 아닐 때는 모델이 코드펜스나 짧은 머리말을 붙일 수 있다.
+function extractJson(text) {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = (fenced ? fenced[1] : text).trim();
+  try {
+    return JSON.parse(candidate);
+  } catch (error) {
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start === -1 || end <= start) throw error;
+    return JSON.parse(candidate.slice(start, end + 1));
+  }
 }
 
 function classifyApiError(status, payload) {
@@ -174,7 +223,7 @@ function textFromContent(content) {
  *   }
  * }
  */
-async function generate(prompt, schema) {
+async function generate(prompt, schema, options = {}) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new ClaudeAdapterError(
@@ -183,7 +232,7 @@ async function generate(prompt, schema) {
     );
   }
 
-  const requestBody = createRequestBody(prompt, schema);
+  const requestBody = createRequestBody(prompt, schema, options);
   const timeoutMs = positiveIntegerFromEnv("CLAUDE_TIMEOUT_MS", DEFAULT_TIMEOUT_MS);
   const startedAt = Date.now();
 
@@ -272,7 +321,7 @@ async function generate(prompt, schema) {
 
   let json;
   try {
-    json = JSON.parse(rawText);
+    json = extractJson(rawText);
   } catch (error) {
     throw new ClaudeAdapterError(`Claude text block was not valid JSON: ${error.message}`, {
       category: "json_parse_error",
@@ -286,6 +335,7 @@ async function generate(prompt, schema) {
 
   return {
     json,
+    rawText, // 검증 실패 시 이 응답을 그대로 대화에 넣어 재생성시킨다
     meta: {
       provider: "anthropic",
       model: payload.model || requestBody.model,
@@ -294,6 +344,7 @@ async function generate(prompt, schema) {
       stopReason: payload.stop_reason || null,
       usage: payload.usage || null,
       latencyMs,
+      mode: options.mode === "prompt" ? "prompt" : "strict",
     },
   };
 }
@@ -304,5 +355,6 @@ module.exports = {
   SYSTEM_PROMPT,
   createRequestBody,
   stripUnsupportedKeywords,
+  extractJson,
   generate,
 };
