@@ -14,17 +14,40 @@ const UNSUPPORTED_KEYWORDS = [
   "pattern", "format", "minimum", "maximum", "uniqueItems", "default",
 ];
 
+// 제거한 제약을 사람이 읽는 문장으로 바꾼다.
+// 그냥 지우기만 하면 모델은 제약 자체를 모른 채 답하고, 판정은 원본 스키마로 하므로
+// 어길 수밖에 없다(실측: prompt_help가 maxItems 4인 principles에 5개를 넣어 실패).
+// description에 남겨두면 문법에는 안 들어가면서 모델에게는 전달된다.
+const CONSTRAINT_PHRASES = {
+  minItems: (v) => `최소 ${v}개`,
+  maxItems: (v) => `최대 ${v}개`,
+  minLength: (v) => `최소 ${v}자`,
+  maxLength: (v) => `최대 ${v}자`,
+  minimum: (v) => `${v} 이상`,
+  maximum: (v) => `${v} 이하`,
+  pattern: (v) => `형식: ${v}`,
+  uniqueItems: (v) => (v ? "중복 금지" : null),
+};
+
 function stripUnsupportedKeywords(node) {
   if (Array.isArray(node)) return node.map(stripUnsupportedKeywords);
-  if (node && typeof node === "object") {
-    const out = {};
-    for (const [k, v] of Object.entries(node)) {
-      if (UNSUPPORTED_KEYWORDS.includes(k)) continue;
-      out[k] = stripUnsupportedKeywords(v);
+  if (!node || typeof node !== "object") return node;
+
+  const out = {};
+  const notes = [];
+  for (const [k, v] of Object.entries(node)) {
+    if (UNSUPPORTED_KEYWORDS.includes(k)) {
+      const note = CONSTRAINT_PHRASES[k]?.(v);
+      if (note) notes.push(note);
+      continue;
     }
-    return out;
+    out[k] = stripUnsupportedKeywords(v);
   }
-  return node;
+
+  if (notes.length) {
+    out.description = out.description ? `${out.description} (${notes.join(", ")})` : notes.join(", ");
+  }
+  return out;
 }
 
 const SYSTEM_PROMPT = `너는 AI와 코딩을 처음 배우는 사용자를 위한 튜터다.
