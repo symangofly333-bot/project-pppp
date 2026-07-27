@@ -1,90 +1,83 @@
 "use strict";
-// 진단용 1회 호출 스크립트. Task 2 라이브 실행이 "compiled grammar too large"로
-// 실패한 원인이 body.type 8종을 한 anyOf에 다 때려넣은 것 때문인지 확인한다.
+// 진단용 1회 호출 스크립트.
 //
-// body 속성을 8종 anyOf 대신 concept_explanation 1종의 $ref로만 바꾼 축소 스키마로
-// 딱 1번 호출한다. 다른 조건(audience/reliability/safety, 미지원 키워드 제거)은
-// 실제 라이브 실행과 동일하게 유지한다.
+// 통짜 schema.v1.json(8종 전부, 14,291자)은 Claude가 거부한다:
+//   "The compiled grammar is too large, which would cause performance issues."
+// 타입 1종만 남기고 안 쓰는 $defs까지 잘라낸 축소본은 통과한다(concept_explanation, 4,493자 확인됨).
 //
-// 실행: node test-single-type.js  (ANTHROPIC_API_KEY, 선택: CLAUDE_STRIP_UNSUPPORTED=1)
+// 축소본도 타입마다 크기가 다르므로(4,273~7,199자), 24회를 다 돌리기 전에
+// "가장 큰 축소본"이 통과하는지부터 1회로 확인한다.
+//
+// 실행:
+//   node test-single-type.js                      기본: 가장 큰 축소본(code_generation)
+//   node test-single-type.js concept_explanation  특정 타입 지정
 
 const fs = require("node:fs");
 const path = require("node:path");
 const Ajv2020 = require("ajv/dist/2020");
-const { generate, stripUnsupportedKeywords } = require("./claude-adapter");
+const { generate } = require("./claude-adapter");
+const { listBodyTypes, buildTypeSchema } = require("../chatbot/schema-split");
+const { flattenUnions } = require("../chatbot/flatten-unions");
+const testCases = require("./test-cases");
 
 const schemaPath = path.join(__dirname, "..", "chatbot", "schema.v1.json");
 const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
 
-// body를 8종 anyOf → concept_explanation 1종 $ref로 축소.
-// 1차 시도에서는 여기서 멈췄었는데, 그러면 $defs 안에 안 쓰는 나머지 7종
-// 정의가 그대로 남아있어서 "진짜 축소"가 아니었다. 이번엔 실제로 도달 가능한
-// $defs만 남기고 나머지는 잘라낸다(tree-shaking) — 그래야 순수하게
-// "1종만 있으면 성공하는지"를 확인할 수 있다.
-const reduced = JSON.parse(JSON.stringify(schema));
-reduced.properties.body = { $ref: "#/$defs/body_concept_explanation" };
-
-function collectRefs(node, found) {
-  if (Array.isArray(node)) { node.forEach((n) => collectRefs(n, found)); return; }
-  if (node && typeof node === "object") {
-    if (typeof node.$ref === "string") {
-      const m = node.$ref.match(/^#\/\$defs\/(.+)$/);
-      if (m) found.add(m[1]);
-    }
-    for (const v of Object.values(node)) collectRefs(v, found);
-  }
+// 인자로 타입을 받고, 없으면 축소본이 가장 큰 타입을 고른다(최악의 경우부터 확인).
+const requested = process.argv[2];
+const allTypes = listBodyTypes(schema).map((item) => item.type);
+let targetType = requested;
+if (!targetType) {
+  targetType = allTypes
+    .map((type) => ({ type, size: JSON.stringify(buildTypeSchema(schema, type)).length }))
+    .sort((a, b) => b.size - a.size)[0].type;
+} else if (!allTypes.includes(targetType)) {
+  console.error(`알 수 없는 타입: ${targetType}\n사용 가능: ${allTypes.join(", ")}`);
+  process.exit(1);
 }
 
-function pruneUnreachableDefs(fullSchema) {
-  const rootWithoutDefs = { ...fullSchema };
-  delete rootWithoutDefs.$defs;
-  const found = new Set();
-  collectRefs(rootWithoutDefs, found); // properties(body 포함)에서 직접 참조하는 def부터 시작
-
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const name of [...found]) {
-      const def = fullSchema.$defs[name];
-      if (!def) continue;
-      const before = found.size;
-      collectRefs(def, found); // 그 def가 또 참조하는 def까지 재귀적으로 확장
-      if (found.size !== before) changed = true;
-    }
-  }
-
-  const prunedDefs = {};
-  for (const name of found) if (fullSchema.$defs[name]) prunedDefs[name] = fullSchema.$defs[name];
-  return { ...fullSchema, $defs: prunedDefs, __prunedDefCount: Object.keys(prunedDefs).length };
+// 축소(타입 1종만) 후 평탄화(선택지 합치기)까지 적용한다.
+// 평탄화는 "모양 가짓수"를 1로 낮춰 grammar 폭발을 없앤다. CLAUDE_FLATTEN=0 으로 끌 수 있다.
+const useFlatten = process.env.CLAUDE_FLATTEN !== "0";
+const reducedSchema = buildTypeSchema(schema, targetType);
+const typeSchema = useFlatten ? flattenUnions(reducedSchema) : reducedSchema;
+const testCase = testCases.find((item) => item.expectedType === targetType);
+if (!testCase) {
+  console.error(`${targetType} 에 해당하는 테스트 케이스가 test-cases.js에 없다.`);
+  process.exit(1);
 }
 
-const beforeDefCount = Object.keys(schema.$defs).length;
-const prunedSchema = pruneUnreachableDefs(reduced);
-delete prunedSchema.__prunedDefCount;
-const afterDefCount = Object.keys(prunedSchema.$defs).length;
-console.log(`$defs 개수: 원본 ${beforeDefCount}개 → 도달 가능한 것만 남긴 뒤 ${afterDefCount}개`);
-
-const stripForApi = process.env.CLAUDE_STRIP_UNSUPPORTED === "1";
-console.log(`CLAUDE_STRIP_UNSUPPORTED=${stripForApi ? "1 (미지원 키워드 제거 적용)" : "미설정 (원본 그대로)"}`);
+const stripForApi = process.env.CLAUDE_STRIP_UNSUPPORTED !== "0";
+const { analyze } = require("../chatbot/analyze-grammar");
+console.log(`대상 타입: ${targetType}${requested ? "" : " (축소본 중 가장 큼 = 최악의 경우)"}`);
+console.log(
+  `스키마: ${JSON.stringify(typeSchema).length.toLocaleString()}자, ` +
+  `모양 가짓수 ${analyze(typeSchema, typeSchema).product.toExponential(1)} ` +
+  `(원본 ${JSON.stringify(schema).length.toLocaleString()}자, 축소만 했을 때 모양 ${analyze(reducedSchema, reducedSchema).product.toExponential(1)})`
+);
+console.log(`평탄화(선택지 합치기): ${useFlatten ? "적용" : "미적용(CLAUDE_FLATTEN=0)"}`);
+console.log(`미지원 키워드 제거: ${stripForApi ? "적용" : "미적용(CLAUDE_STRIP_UNSUPPORTED=0)"}`);
+console.log("\n호출 1회 시도 중...\n");
 
 async function main() {
-  console.log("\n요청 스키마: body 8종 → concept_explanation 1종으로 축소");
-  console.log("호출 1회 시도 중...\n");
-
   try {
-    const response = await generate("AI가 뭐야?", prunedSchema);
+    const response = await generate(testCase.prompt, typeSchema);
     console.log("=== 성공 ===");
     console.log("model:", response.meta.model);
     console.log("stop_reason:", response.meta.stopReason);
-    console.log("응답 body.type:", response.json?.body?.type);
+    console.log("응답 body.type:", response.json?.body?.type, response.json?.body?.type === targetType ? "(일치)" : "(불일치!)");
+    console.log("응답 크기:", JSON.stringify(response.json).length.toLocaleString(), "자");
 
-    // 원본 스키마 기준으로 형식만 참고 확인 (축소 스키마라 그대로는 통과 못 할 수 있음 — 정보용)
-    const ajv = new Ajv2020({ allErrors: true, strict: true });
-    const validate = ajv.compile(schema);
-    console.log("\n(참고) 원본 schema.v1.json 기준 AJV:", validate(response.json) ? "통과" : "실패 (축소판이라 예상됨)");
+    // 판정은 언제나 원본 스키마로 한다
+    const validate = new Ajv2020({ allErrors: true, strict: true }).compile(schema);
+    const valid = validate(response.json);
+    console.log("\n원본 schema.v1.json 기준 AJV 판정:", valid ? "통과" : "실패");
+    if (!valid) {
+      console.log(JSON.stringify(validate.errors, null, 2).slice(0, 2000));
+    }
 
-    console.log("\n결론: body 8종을 1종으로 줄이니 성공했다면, '8종 한 번에'가 grammar too large의 원인이다.");
-    console.log("      → 다음 단계: 스키마를 body.type별로 쪼개고, 분류 후 해당 타입 스키마로 생성하는 2단계 방식으로 간다.");
+    console.log("\n결론: 가장 큰 축소본이 통과했다면 나머지 7종도 통과할 가능성이 높다.");
+    console.log("      → 다음 단계: 2단계 파이프라인(분류→생성)으로 24회 정식 테스트.");
   } catch (error) {
     console.log("=== 실패 ===");
     console.log("category:", error.category);
@@ -93,9 +86,9 @@ async function main() {
     if (error.rawError) console.log("원문:", JSON.stringify(error.rawError, null, 2));
 
     if (error.category === "schema_compilation_error" || error.category === "schema_request_error") {
-      console.log("\n결론: 1종으로 줄여도 여전히 실패했다면, 원인이 '8종 스위치'가 아니라");
-      console.log("      더 깊은 중첩 구조(action_step/explanation_block 등 재사용 $ref) 자체에 있다.");
-      console.log("      → 다음 단계: 스키마 구조 자체를 단순화해야 한다 (B 방식).");
+      console.log("\n결론: 축소본도 이 크기에서는 거부된다.");
+      console.log("      → 한계선이 4,493자(성공 확인)와 이 크기 사이에 있다.");
+      console.log("      → 큰 타입들은 추가로 더 줄여야 한다(중첩 구조 평탄화 등).");
     }
   }
 }

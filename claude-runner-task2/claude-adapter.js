@@ -84,10 +84,12 @@ function createRequestBody(prompt, schema) {
     });
   }
 
-  // 기본(A): 원본 스키마를 변환 없이 전송 → 첫 라이브 400으로 실제 계약을 진단.
-  // 옵트인(B): CLAUDE_STRIP_UNSUPPORTED=1 이면 미지원 키워드만 제거한 스키마로 생성.
-  //           (AJV 판정은 run-eval에서 항상 원본 스키마로 하므로 계약은 유지된다.)
-  const stripForGeneration = process.env.CLAUDE_STRIP_UNSUPPORTED === "1";
+  // 라이브 진단 결과: Claude 구조화 출력은 maxItems/maxLength/minItems를 거부한다.
+  //   "For 'array' type, property 'maxItems' is not supported"
+  // 따라서 미지원 키워드 제거가 기본값이다.
+  // CLAUDE_STRIP_UNSUPPORTED=0 으로 두면 원본 그대로 보내는 진단 모드로 되돌릴 수 있다.
+  // (AJV 판정은 항상 원본 스키마로 하므로 계약 자체는 그대로 유지된다.)
+  const stripForGeneration = process.env.CLAUDE_STRIP_UNSUPPORTED !== "0";
   const schemaForApi = stripForGeneration ? stripUnsupportedKeywords(schema) : schema;
 
   return {

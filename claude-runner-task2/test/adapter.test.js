@@ -14,12 +14,40 @@ const schema = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, "../../chatbot/schema.v1.json"), "utf8")
 );
 
-test("createRequestBody passes the exact original schema object", () => {
-  const body = createRequestBody("AI가 뭐야?", schema);
-  assert.equal(body.output_config.format.type, "json_schema");
-  assert.strictEqual(body.output_config.format.schema, schema);
-  assert.equal(body.output_config.format.schema.properties.one_line_answer.maxLength, 120);
-  assert.equal(body.output_config.format.schema.properties.next_steps.minItems, 1);
+// Claude는 구조화 출력에서 maxItems/maxLength/minItems를 거부한다
+// ("For 'array' type, property 'maxItems' is not supported"), 그래서 제거가 기본값이다.
+test("createRequestBody strips Claude-unsupported keywords by default", () => {
+  const previous = process.env.CLAUDE_STRIP_UNSUPPORTED;
+  delete process.env.CLAUDE_STRIP_UNSUPPORTED;
+  try {
+    const body = createRequestBody("AI가 뭐야?", schema);
+    const sent = body.output_config.format.schema;
+    assert.equal(body.output_config.format.type, "json_schema");
+    assert.equal(sent.properties.one_line_answer.maxLength, undefined);
+    assert.equal(sent.properties.next_steps.minItems, undefined);
+    // 구조(필수 필드·판별자)는 그대로여야 한다
+    assert.deepEqual(sent.required, schema.required);
+    assert.equal(sent.properties.body.anyOf.length, 8);
+    // 원본 객체를 변형하면 안 된다
+    assert.equal(schema.properties.one_line_answer.maxLength, 120);
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_STRIP_UNSUPPORTED;
+    else process.env.CLAUDE_STRIP_UNSUPPORTED = previous;
+  }
+});
+
+test("createRequestBody passes the original schema unchanged in diagnostic mode (=0)", () => {
+  const previous = process.env.CLAUDE_STRIP_UNSUPPORTED;
+  process.env.CLAUDE_STRIP_UNSUPPORTED = "0";
+  try {
+    const body = createRequestBody("AI가 뭐야?", schema);
+    assert.strictEqual(body.output_config.format.schema, schema);
+    assert.equal(body.output_config.format.schema.properties.one_line_answer.maxLength, 120);
+    assert.equal(body.output_config.format.schema.properties.next_steps.minItems, 1);
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_STRIP_UNSUPPORTED;
+    else process.env.CLAUDE_STRIP_UNSUPPORTED = previous;
+  }
 });
 
 test("createRequestBody uses output_config.format and no sampling parameters", () => {
@@ -82,7 +110,9 @@ test("generate normalizes a successful Claude JSON response", async () => {
     assert.equal(response.json.body.type, "concept_explanation");
     assert.equal(response.meta.provider, "anthropic");
     assert.equal(response.meta.model, "claude-sonnet-5");
-    assert.deepEqual(sentBody.output_config.format.schema, schema);
+    // 기본 모드라 미지원 키워드는 빠진 채로 전송된다. 구조(판별자)는 유지되어야 한다.
+    assert.equal(sentBody.output_config.format.schema.properties.body.anyOf.length, 8);
+    assert.equal(sentBody.output_config.format.schema.properties.one_line_answer.maxLength, undefined);
   } finally {
     global.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.ANTHROPIC_API_KEY;
