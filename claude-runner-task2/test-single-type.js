@@ -36,9 +36,11 @@ if (!targetType) {
   process.exit(1);
 }
 
-// 축소(타입 1종만) 후 평탄화(선택지 합치기)까지 적용한다.
-// 평탄화는 "모양 가짓수"를 1로 낮춰 grammar 폭발을 없앤다. CLAUDE_FLATTEN=0 으로 끌 수 있다.
-const useFlatten = process.env.CLAUDE_FLATTEN !== "0";
+// 축소(타입 1종만)만 기본으로 적용한다.
+// 평탄화(선택지 합치기)는 모양 가짓수를 1로 낮추지만, 라이브 테스트에서 거부를 못 막는 것이
+// 확인됐다(code_generation 5,738자/모양 1 -> 여전히 거부). 오히려 속성 수를 늘려 측정을
+// 왜곡하므로 기본은 끄고, 재확인이 필요할 때만 CLAUDE_FLATTEN=1 로 켠다.
+const useFlatten = process.env.CLAUDE_FLATTEN === "1";
 const reducedSchema = buildTypeSchema(schema, targetType);
 const typeSchema = useFlatten ? flattenUnions(reducedSchema) : reducedSchema;
 const testCase = testCases.find((item) => item.expectedType === targetType);
@@ -55,7 +57,7 @@ console.log(
   `모양 가짓수 ${analyze(typeSchema, typeSchema).product.toExponential(1)} ` +
   `(원본 ${JSON.stringify(schema).length.toLocaleString()}자, 축소만 했을 때 모양 ${analyze(reducedSchema, reducedSchema).product.toExponential(1)})`
 );
-console.log(`평탄화(선택지 합치기): ${useFlatten ? "적용" : "미적용(CLAUDE_FLATTEN=0)"}`);
+console.log(`평탄화(선택지 합치기): ${useFlatten ? "적용(CLAUDE_FLATTEN=1)" : "미적용 — 효과 없음이 확인된 방법"}`);
 console.log(`미지원 키워드 제거: ${stripForApi ? "적용" : "미적용(CLAUDE_STRIP_UNSUPPORTED=0)"}`);
 console.log("\n호출 1회 시도 중...\n");
 

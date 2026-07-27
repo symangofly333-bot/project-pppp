@@ -241,10 +241,30 @@ Node.js, Claude Code CLI 설치. Claude 구독 계정 로그인(계정 혼동 �
 
 - **기각된 가설: "선택지(anyOf) 조합 폭발이 원인"** — 평탄화로 모양 가짓수를 140→1로 만들었는데도 거부됐다. 조합 수는 무관하다. (평탄화 도구는 `chatbot/flatten-unions.js`에 남겨뒀으나 효과 없음이 실측으로 확인됨 — 재시도하지 말 것)
 - **기각된 가설: "description이 크기를 차지한다"** — 전부 제거해도 8%만 줄어든다.
-- **실제 한계선: 펼친 속성 개수 76(통과) ~ 223(거부) 사이.** 타입별 속성 수: safety_notice 68 / concept_explanation 76 / prompt_help 77 / clarification_request 82 / code_explanation 145 / procedure 186 / error_diagnosis 195 / code_generation 223
-- **즉 작은 4종은 통과 가능하지만, 큰 4종은 스키마 설계 자체가 Claude 구조화 출력에 비해 과하다.** 이건 변환 기교로 못 넘고, 스키마를 단순화하거나 강제 출력을 포기해야 하는 **설계 결정**이다.
+- **기각된 가설: "선택 필드가 많아서 Claude의 선택 매개변수 24개 제한에 걸린다"** — 8종 전부 선택 필드가 **0개**다(모든 속성이 `required`). 무관하다.
+- **한계선은 단일 수치로 환원되지 않는다.** Claude 내부 문법(grammar) 크기는 속성 수·중첩 깊이·`$ref` 반복·유니온이 함께 만들어낸다. 다만 작은 4종과 큰 4종은 아래 지표 전부에서 깨끗하게 갈린다:
+
+| body.type | 펼친 속성 | 객체 수 | 유니온 | 최대 깊이 | 라이브 |
+|---|---|---|---|---|---|
+| safety_notice | 68 | 23 | 2 | 9 | 미확인 |
+| concept_explanation | 76 | 26 | 2 | 9 | ✅ 통과 |
+| prompt_help | 77 | 26 | 2 | 9 | 미확인 |
+| clarification_request | 82 | 26 | 2 | 9 | 미확인 |
+| code_explanation | 145 | 43 | 5 | 9 | 미확인 |
+| procedure | 186 | 49 | 10 | 16 | 미확인 |
+| error_diagnosis | 195 | 52 | 11 | 12 | 미확인 |
+| code_generation | 223 | 57 | 10 | 16 | ❌ 거부 |
+
+- `code_generation`에서 `file_source_code`가 7회, `source_code`가 5회 재사용된다. **`$ref` 자체가 아니라 큰 구조를 여러 위치에서 반복 참조하는 것**이 문법을 부풀린다.
+- **⚠️ 실측으로 거부가 확인된 건 `code_generation` 하나뿐이다.** 나머지 3개 큰 타입(code_explanation/procedure/error_diagnosis)은 추정일 뿐이므로, 스키마를 뜯어고치기 **전에** 1회씩 찔러봐야 한다.
 - 관련: databank **PD1(검증 비용의 역설)** — 이 스키마는 실제 모델에 한 번도 붙여보지 않은 채 정교하게 설계됐다. 지금 그 청구서가 온 것.
-- 아직 안 한 것: 위 설계 결정, 2단계 파이프라인 구현, 24회 정식 재테스트(Task 2), 리포트(Task 3)
+
+**교차검증(ChatGPT) 결론 — 채택한 방향:**
+1. 지금 당장은 **강제 구조화 출력을 쓰지 않는다.** 프롬프트로 JSON 형식을 요청 → `JSON.parse` → AJV(원본 `schema.v1.json`) → `semantic_validator` → 실패하면 오류 내용을 넣어 **1회만** 재생성 → 그래도 실패하면 안전한 오류 화면.
+2. 실사용 가치가 확인된 뒤에 **분류 호출 → 타입별 축소 strict 스키마** 2단계로 전환한다.
+3. 명백한 중복(`error_diagnosis`의 `failing_code`와 `minimal_fix.before`)은 지금 줄이되, 교육용 필드(`comprehension_check`, `analogy` 등)를 뺄지는 **실사용자 테스트 후에** 정한다.
+- 이유: 실사용자가 아직 0명이라, 스키마를 더 다듬는 건 PD1이 경고한 과설계 반복이다.
+- 아직 안 한 것: 6종 라이브 확인, 위 1번 방식 구현, 24회 정식 재테스트(Task 2), 리포트(Task 3)
 
 **분석 도구 (전부 오프라인, 비용 0):**
 `chatbot/schema-split.js`(타입별 축소) · `check-split.js`(8종 검증) · `analyze-grammar.js`(모양 가짓수) · `measure-size.js`(크기·속성 측정) · `flatten-unions.js`(평탄화, 효과 없음 확인됨)
