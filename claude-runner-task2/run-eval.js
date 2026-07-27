@@ -4,7 +4,8 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const Ajv2020 = require("ajv/dist/2020");
-const { generate, DEFAULT_MODEL } = require("./claude-adapter");
+const { DEFAULT_MODEL } = require("./claude-adapter");
+const { generateValidated } = require("./generate-validated");
 const testCases = require("./test-cases");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -211,7 +212,10 @@ function causeForError(category) {
   if (
     category === "refusal" ||
     category === "output_truncated" ||
-    category === "json_parse_error"
+    category === "json_parse_error" ||
+    // 재생성까지 하고도 스키마를 못 지킨 경우. 스키마가 컴파일을 못 한 것과는 다른 문제다.
+    category === "validation_failed" ||
+    category === "classification_error"
   ) {
     return "prompt_or_model_behavior";
   }
@@ -228,11 +232,28 @@ function causeForError(category) {
   return "request_or_provider";
 }
 
-function summarize(results, plannedCalls, schemaApiCompilation) {
+function summarize(results, plannedCalls) {
   const completed = results.filter((item) => item.response);
   const ajvPass = completed.filter((item) => item.validation.ajvValid).length;
   const typeCorrect = completed.filter((item) => item.validation.typeMatches).length;
+  const firstAttemptClean = completed.filter((item) => item.validation.firstAttemptClean).length;
   const semantic = {};
+
+  // 방식(강제 출력 / 프롬프트)별로 나눠 본다. 프롬프트 방식은 형식을 모델이 자율로
+  // 지키므로, 한 번에 통과하는 비율이 이 방식을 신뢰할 수 있는지 판단하는 근거다.
+  const byMode = {};
+  for (const item of completed) {
+    const mode = item.validation.mode;
+    byMode[mode] ||= { responses: 0, firstAttemptClean: 0, retried: 0, latencyMsTotal: 0 };
+    byMode[mode].responses += 1;
+    if (item.validation.firstAttemptClean) byMode[mode].firstAttemptClean += 1;
+    if (item.validation.attemptCount > 1) byMode[mode].retried += 1;
+    byMode[mode].latencyMsTotal += item.validation.totalLatencyMs;
+  }
+  for (const stats of Object.values(byMode)) {
+    stats.meanLatencyMs = Math.round(stats.latencyMsTotal / stats.responses);
+    stats.firstAttemptCleanRate = stats.firstAttemptClean / stats.responses;
+  }
 
   for (const item of completed) {
     for (const violation of item.validation.semanticViolations) {
@@ -276,8 +297,18 @@ function summarize(results, plannedCalls, schemaApiCompilation) {
       rateOfPlanned: plannedCalls ? ajvPass / plannedCalls : 0,
       rateOfCompleted: completed.length ? ajvPass / completed.length : 0,
     },
+    firstAttempt: {
+      clean: firstAttemptClean,
+      denominatorCompleted: completed.length,
+      rateOfCompleted: completed.length ? firstAttemptClean / completed.length : 0,
+    },
+    byMode,
+    meanLatencyMs: completed.length
+      ? Math.round(
+          completed.reduce((sum, item) => sum + item.validation.totalLatencyMs, 0) / completed.length
+        )
+      : 0,
     semanticRuleCounts: semantic,
-    schemaApiCompilation,
     variability,
   };
 }
@@ -311,11 +342,16 @@ function renderReport(run) {
           s.typeClassification.rateOfPlanned
         )})`,
     liveBlocked
-      ? "- 원본 schema.v1.json AJV 통과율: **미실행**"
-      : `- 원본 schema.v1.json AJV 통과율: ${s.ajv.passed}/${s.plannedCalls} (${percent(
+      ? "- 최종 통과율(재생성 포함): **미실행**"
+      : `- 최종 통과율(재생성 포함): ${s.ajv.passed}/${s.plannedCalls} (${percent(
           s.ajv.rateOfPlanned
         )})`,
-    `- Claude API 원본 스키마 컴파일: **${s.schemaApiCompilation.status}**`,
+    liveBlocked
+      ? "- 1차 시도 통과율: **미실행**"
+      : `- 1차 시도 통과율(재생성 없이): ${s.firstAttempt.clean}/${s.firstAttempt.denominatorCompleted} (${percent(
+          s.firstAttempt.rateOfCompleted
+        )})`,
+    liveBlocked ? "- 평균 응답시간: **미실행**" : `- 평균 응답시간: ${s.meanLatencyMs}ms (분류 + 생성 합계)`,
     "",
   ];
 
@@ -326,7 +362,19 @@ function renderReport(run) {
     );
   }
 
+  lines.push("## 생성 방식별 결과", "", "| 방식 | 응답 | 1차 통과 | 재생성 발생 | 평균 응답시간 |", "|---|---:|---:|---:|---:|");
+  for (const [mode, stats] of Object.entries(s.byMode)) {
+    lines.push(
+      `| ${mode === "strict" ? "구조화 출력 강제" : "프롬프트 + 검증"} | ${stats.responses} | ` +
+      `${stats.firstAttemptClean} (${percent(stats.firstAttemptCleanRate)}) | ${stats.retried} | ${stats.meanLatencyMs}ms |`
+    );
+  }
+
   lines.push(
+    "",
+    "8종 중 작은 4종만 구조화 출력이 가능하고, 큰 4종은 스키마가 커서 Claude가 컴파일을 거부한다.",
+    "파이프라인은 강제 출력을 먼저 시도하고 거부되면 프롬프트 방식으로 내려간다.",
+    "",
     "## 원본 스키마 사전 점검",
     "",
     `- 속성 수: ${run.schemaStats.properties}`,
@@ -338,9 +386,13 @@ function renderReport(run) {
     `- \`maxItems\`: ${run.schemaStats.keywordCounts.maxItems || 0}곳`,
     `- \`maxLength\`: ${run.schemaStats.keywordCounts.maxLength || 0}곳`,
     "",
-    "주의: 전달받은 설명의 “anyOf 9개”와 달리 파일을 직접 세면 literal `anyOf`는 5곳이다. `$ref` 재사용을 실제 매개변수 위치로 펼치면 10곳으로 추정된다. Claude의 16개 제한 적용 방식은 라이브 컴파일 결과를 최종 기준으로 삼는다.",
+    "선택 속성이 0개이므로 Anthropic의 '선택 매개변수 24개' 제한은 거부 원인이 아니다.",
+    "union도 펼쳐서 16개 제한 안쪽이다. 거부는 이 개별 제한이 아니라 컴파일된 문법 전체 크기 때문이며,",
+    "실측 한계선은 타입별 축소 스키마 기준 4,492자(통과)~6,134자(거부) 사이다.",
     "",
-    "또한 Anthropic 공식 문서는 `maxLength`를 구조화 출력에서 SDK가 제거하는 미지원 제약의 예로 든다. 이번 러너는 지시대로 제거하지 않고 원본을 그대로 전송하며, 400이 나면 원문을 기록한다.",
+    "`maxItems`/`maxLength` 등은 구조화 출력에서 지원되지 않아 생성용 스키마에서만 제거하고,",
+    "제약 내용은 `description`에 문장으로 옮겨 모델에 전달한다. 프롬프트 방식에서는 원본을 그대로 보낸다.",
+    "판정은 어느 방식이든 항상 원본 `schema.v1.json`으로 한다.",
     "",
     "## semantic_validator 규칙별 위반",
     "",
@@ -402,11 +454,12 @@ function renderReport(run) {
   lines.push(
     "## 판정 기준",
     "",
-    "- 생성 요청과 AJV 판정 모두 원본 `schema.v1.json`을 사용했다.",
+    "- AJV 판정은 언제나 원본 `schema.v1.json`으로 한다. 생성용으로 축소·변형한 스키마는 판정에 쓰지 않는다.",
     "- `schema.v1.openai-strict.json`은 읽거나 전송하거나 판정에 사용하지 않았다.",
-    "- 첫 성공 응답이 오면 원본 스키마가 Claude에서 컴파일된 것으로 기록한다.",
-    "- 첫 요청이 `Schema is too complex for compilation` 또는 다른 스키마 400으로 실패하면 나머지 호출을 중단한다.",
-    "- refusal·max_tokens·JSON 파싱 실패는 스키마 문제가 아니라 프롬프트/모델 동작으로 분리한다.",
+    "- 한 질문 = 분류 1회 + 생성 1~2회. AJV 또는 semantic_validator의 block 위반이 있으면 위반 목록을 돌려주고 1회만 재생성한다.",
+    "- '최종 통과율'은 재생성을 포함한 결과, '1차 시도 통과율'은 재생성 없이 한 번에 통과한 비율이다. 방식별 신뢰도는 후자로 본다.",
+    "- 재생성 후에도 실패하면 `validation_failed`로 기록하며, 이는 스키마 컴파일 문제가 아니라 모델 동작 문제로 분류한다.",
+    "- refusal·max_tokens·JSON 파싱 실패도 스키마 문제가 아니라 프롬프트/모델 동작으로 분리한다.",
     "",
     "## 공식 문서",
     "",
@@ -463,15 +516,12 @@ async function main() {
   const plannedCalls = testCases.length * repeats;
   const results = [];
   let runStatus = "completed";
-  const schemaApiCompilation = { status: "not_tested", firstSuccessfulCase: null, error: null };
 
   if (!process.env.ANTHROPIC_API_KEY) {
     runStatus = "blocked_missing_api_key";
   } else {
-    let stopForSchema = false;
     for (const testCase of testCases) {
       for (let repeat = 1; repeat <= repeats; repeat += 1) {
-        if (stopForSchema) break;
         const record = {
           caseId: testCase.id,
           expectedType: testCase.expectedType,
@@ -484,16 +534,12 @@ async function main() {
         };
 
         try {
-          const response = await generate(testCase.prompt, schema);
-          if (schemaApiCompilation.status === "not_tested") {
-            schemaApiCompilation.status = "passed";
-            schemaApiCompilation.firstSuccessfulCase = {
-              caseId: testCase.id,
-              repeat,
-              requestId: response.meta.requestId,
-            };
-          }
+          // 분류 → 생성 → 검증 → (실패 시) 1회 재생성. 큰 4종은 강제 출력이 거부되므로
+          // 파이프라인이 알아서 프롬프트 방식으로 내려간다(generate-validated.js 참고).
+          const response = await generateValidated(testCase.prompt, testCase.context);
 
+          // 파이프라인은 통과한 응답만 돌려주므로 여기서 다시 판정할 필요는 없지만,
+          // 러너가 스스로 확인한 값을 기록으로 남긴다.
           const ajvValid = validate(response.json);
           const semanticViolations = semanticCheck(response.json, testCase.context).map(
             normalizeViolation
@@ -504,6 +550,11 @@ async function main() {
             ajvErrors: ajvValid ? [] : JSON.parse(JSON.stringify(validate.errors || [])),
             actualType: response.json?.body?.type ?? null,
             typeMatches: response.json?.body?.type === testCase.expectedType,
+            // 재생성 없이 한 번에 통과했는가. 이게 방식별 신뢰도를 보는 진짜 지표다.
+            firstAttemptClean: response.attempts[0].violations.length === 0,
+            attemptCount: response.attempts.length,
+            mode: response.meta.mode,
+            totalLatencyMs: response.meta.totalLatencyMs,
             semanticViolations,
             semanticBlockCount: semanticViolations.filter(
               (item) => item.severity === "block"
@@ -529,25 +580,14 @@ async function main() {
             },
             latencyMs: error.latencyMs ?? null,
           };
-          if (
-            category === "schema_compilation_error" ||
-            category === "schema_request_error"
-          ) {
-            schemaApiCompilation.status = "failed";
-            schemaApiCompilation.error = record.error;
-            stopForSchema = true;
-            runStatus = "stopped_schema_error";
-          } else {
-            runStatus = "completed_with_failures";
-          }
+          runStatus = "completed_with_failures";
         }
         results.push(record);
       }
-      if (stopForSchema) break;
     }
   }
 
-  const summary = summarize(results, plannedCalls, schemaApiCompilation);
+  const summary = summarize(results, plannedCalls);
   const run = {
     runnerVersion: "1.0.0",
     startedAt,

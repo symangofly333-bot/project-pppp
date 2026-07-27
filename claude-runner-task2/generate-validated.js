@@ -99,9 +99,14 @@ async function generateValidated(prompt, context = {}) {
     });
 
     if (violations.length === 0) {
+      // 분류 1회 + 생성 시도들. 타입별로 최초 1회만 발생하는 강제 출력 거부 요청은
+      // 답을 만들기 전에 끝나므로 여기에 포함하지 않는다.
+      const totalLatencyMs = classification.meta.latencyMs +
+        attempts.reduce((sum, a) => sum + a.latencyMs, 0);
+
       return {
         json: result.json,
-        meta: { ...result.meta, bodyType, classifierMeta: classification.meta },
+        meta: { ...result.meta, bodyType, totalLatencyMs, classifierMeta: classification.meta },
         attempts,
         // 통과했어도 warn은 남겨 보고서에서 셀 수 있게 한다.
         violations: semanticValidator.check(result.json, context),
