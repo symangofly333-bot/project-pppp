@@ -4,6 +4,7 @@
   "version": "2.1",
   "description": "Points arrows at real ChatGPT buttons to guide first-time users",
   "permissions": ["storage"],
+  "host_permissions": ["http://localhost:8787/*"],
   "action": {},
   "background": {
     "service_worker": "background.js"

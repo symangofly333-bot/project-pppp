@@ -169,10 +169,10 @@ pppp/
 ├─ AI_ROLE_PROMPT.md              ← 후속 AI 역할 지시서
 │
 ├─ chatgpt-tutorial-extension/    ← 실제 크롬 확장 (git, GitHub push됨)
-│   ├─ manifest.json              (v2.1, content.js + chatbot.js 로드)
+│   ├─ manifest.json              (v2.1, host_permissions에 중계 서버 주소 등록)
 │   ├─ content.js                 가이드 오버레이 (Phase 1, 약 800줄)
-│   ├─ chatbot.js                 챗봇 팝업 (Phase 2, 껍데기 + 표시구조)
-│   └─ background.js              아이콘 클릭 → 가이드 재시작
+│   ├─ chatbot.js                 챗봇 팝업 (Phase 2, AI 연결 완료 — sendToAI가 background 경유로 중계 서버 호출)
+│   └─ background.js              아이콘 클릭 → 가이드 재시작 / "ask-ai" 메시지를 중계 서버로 fetch
 │
 ├─ chatbot/                       ← 챗봇 응답 스키마 설계/검증 (별도 AI 제작)
 │   ├─ schema.v1.json             원본 스키마 (판정 기준 = 진짜 계약)
@@ -182,11 +182,16 @@ pppp/
 │   ├─ validate.js                ajv 검증 스크립트
 │   └─ semantic_validator.js      의미 검증기
 │
-└─ claude-runner-task2/           ← Claude 실제 API 생성 테스트 러너 (별도 AI 제작 + 수정)
-    ├─ claude-adapter.js          Claude Messages API 어댑터 (output_config.format)
-    ├─ run-eval.js                8종×3회=24회 생성 테스트 + 리포트 생성
-    ├─ test-single-type.js        진단용: body 1종만 남긴 축소 스키마로 1회 테스트
-    └─ offline-check.js           오프라인 검증 (ajv + semantic_validator, API 호출 없음)
+├─ claude-runner-task2/           ← Claude 실제 API 생성 테스트 러너 (별도 AI 제작 + 수정)
+│   ├─ claude-adapter.js          Claude Messages API 어댑터 (강제 출력 + 프롬프트 모드 둘 다 지원)
+│   ├─ generate-validated.js      분류→생성→검증→재생성 파이프라인 (server/가 이걸 그대로 가져다 씀)
+│   ├─ run-eval.js                8종×3회=24회 생성 테스트 + 리포트 생성
+│   ├─ test-single-type.js        진단용: body 1종만 남긴 축소 스키마로 1회 테스트
+│   └─ offline-check.js           오프라인 검증 (ajv + semantic_validator, API 호출 없음)
+│
+└─ server/                        ← 확장 프로그램 ↔ Claude API 중계 서버 (API 키는 여기에만 존재)
+    ├─ index.js                   POST /ask → generate-validated.js 호출 → 결과 반환
+    └─ package.json               `npm start` (기본 포트 8787)
 ```
 
 ### Phase 0 — 개발 환경 ✅ 완료
@@ -301,7 +306,23 @@ Node.js, Claude Code CLI 설치. Claude 구독 계정 로그인(계정 혼동 �
 
 **결론: 강제로 형식을 잡아주지 않고 "부탁"만 해도, 큰 4종 전부 12번 중 12번 한 번에 정확한 JSON을 냈다.** 오히려 강제 출력보다 빠르다(분류 단계 스키마가 작아서로 추정). 이는 "지금은 스키마를 축소하지 않고, 실사용자 테스트 후에 결정한다"는 방향을 뒷받침하는 실측 근거다. 표본이 24회뿐이라 확률 자체를 단정할 순 없지만, 지금 스키마를 더 깎을 급한 이유가 없다는 판단에는 충분하다.
 
-- 남은 것: 챗봇 본체(`chatgpt-tutorial-extension/chatbot.js`의 `sendToAI()`)에 이 파이프라인(`generate-validated.js`) 연결. 이게 Phase 2의 마지막 남은 조각이다.
+**✅ 챗봇 본체 연결 완료 — Phase 2 기능적으로 완성:**
+
+```
+chatbot.js (브라우저, 확장 프로그램)
+   → chrome.runtime.sendMessage({type:"ask-ai", prompt})
+background.js (확장 프로그램 자체 컨텍스트, 페이지 CSP 영향 안 받음)
+   → fetch http://localhost:8787/ask
+server/index.js (개발자가 운영하는 서버, ANTHROPIC_API_KEY는 여기만)
+   → generate-validated.js (분류→생성→검증→재생성)
+   → Claude API
+```
+
+- **왜 서버를 하나 더 두었나:** 확장 프로그램 코드는 설치한 모든 사용자의 브라우저에서 실행된다. 거기에 API 키를 넣으면 설치자 전원의 브라우저에 키가 노출되고, 개발자 앞으로 무제한 비용이 청구될 수 있다. 그래서 키는 개발자가 운영하는 이 중계 서버에만 두고, 확장 프로그램은 그 서버의 `/ask`만 호출한다. (사용자가 직접 선택: "내 서버를 두고 중계" 방식 채택)
+- **왜 background.js를 거치나:** `chatbot.js`는 `content_scripts`로 실제 ChatGPT 페이지 안에서 실행되므로 그 페이지의 CSP(콘텐츠 보안 정책)를 적용받는다. `background.js`(service worker)는 페이지와 분리된 확장 프로그램 자체 컨텍스트라 이 제약이 없다.
+- `chatbot.js`의 답변 렌더러(`addAiAnswer`)를 전면 재작성했다. 예전 스텁은 `{topic, term_meaning, code_explanation, overall_structure, doc_link}`라는, 실제 스키마와 무관한 가짜 필드를 그렸다. 실제 `schema.v1.json`은 `body.type`마다 필드가 다르므로(4~9개, 최대 3단계 중첩), 타입별 화면을 따로 만드는 대신 필드 이름→한국어 라벨 매핑 + 재귀 렌더러로 8종을 전부 하나의 함수로 그린다. `safety.status`가 `standard`가 아니면 경고 배너, `reliability.status`가 `stable`이 아니면 안내 문구를 붙인다.
+- 지금은 `--host_permissions`와 중계 서버 주소가 `http://localhost:8787` 로 고정돼 있다. **실제 사용자에게 배포하려면** 이 서버를 어딘가에 올리고(Render/Railway 등) 주소를 바꿔야 한다 — 지금은 로컬 개발/테스트 단계이므로 의도적으로 미룬 것.
+- 아직 라이브로 브라우저에서 직접 확인은 안 했다. 다음 단계: 크롬에 확장 프로그램을 로드하고, `cd server && npm start`로 중계 서버를 띄운 뒤, ChatGPT 페이지에서 실제로 질문해보는 것.
 
 **분석 도구 (전부 오프라인, 비용 0):**
 `chatbot/schema-split.js`(타입별 축소) · `check-split.js`(8종 검증) · `analyze-grammar.js`(모양 가짓수) · `measure-size.js`(크기·속성 측정) · `flatten-unions.js`(평탄화, 효과 없음 확인됨)

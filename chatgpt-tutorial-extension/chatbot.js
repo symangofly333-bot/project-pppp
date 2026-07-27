@@ -79,6 +79,21 @@ if (!window.__cgptChatbotInjected) {
       .msg.ai .sec-h { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #10a37f; margin-bottom: 2px; }
       .msg.ai .sec-b { font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
       .msg.ai .doclink { display: inline-block; margin-top: 4px; font-size: 12px; color: #10a37f; text-decoration: underline; }
+      .msg.ai .lead { font-weight: 600; margin-bottom: 8px; }
+      .msg.ai .sub-card { border-left: 2px solid #e5e5e5; padding-left: 8px; margin: 4px 0; }
+      .msg.ai .list-item { margin: 2px 0; }
+      .msg.ai .code-block {
+        background: #f0f0f1; border-radius: 6px; padding: 8px 10px;
+        font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+        white-space: pre-wrap; word-break: break-word; overflow-x: auto; margin-top: 2px;
+      }
+      .msg.ai .code-tag { font-size: 11px; color: #888; margin-top: 2px; }
+      .msg.ai .code-hint { font-size: 12px; color: #555; margin-top: 4px; }
+      .msg.ai .safety-banner {
+        background: #fff4e5; border: 1px solid #f0c36d; color: #7a4a00;
+        border-radius: 8px; padding: 8px 10px; font-size: 12px; margin-bottom: 8px;
+      }
+      .msg.ai .rel-note { font-size: 12px; color: #888; margin-top: 6px; }
 
       /* 대기 중 로딩 점 3개 */
       .loading span { display: inline-block; width: 6px; height: 6px; margin: 0 2px; border-radius: 50%; background: #999; animation: blink 1.2s infinite both; }
@@ -174,40 +189,208 @@ if (!window.__cgptChatbotInjected) {
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  // ── AI 답변(JSON)을 소제목별 칸으로 그립니다. 빈 칸은 건너뜁니다. (스트리밍 없음)
-  const SECTIONS = [
-    ["topic", "Topic"],
-    ["term_meaning", "Term meaning"],
-    ["code_explanation", "Code explanation"],
-    ["overall_structure", "Overall structure"],
-  ];
+  // ── AI 답변(JSON) 렌더링.
+  //
+  // 답변은 body.type에 따라 8가지로 모양이 다르다(schema.v1.json 참고). 타입마다 화면을
+  // 따로 만드는 대신, 필드 이름을 한국어 라벨로 바꿔가며 일반적으로 그린다.
+  const LABELS = {
+    // concept_explanation / code_explanation 공용
+    topic_domain: "주제 영역", analogy: "비유", explanation: "설명",
+    glossary: "용어", comprehension_check: "확인 질문",
+    subject_code: "분석한 코드", big_picture: "전체 그림", walkthrough: "한 줄씩 설명",
+    execution_trace: "실행 흐름", concepts: "핵심 개념", predicted_output: "예상 결과",
+    // prompt_help
+    goal_restated: "목표 정리", principles: "핵심 원칙",
+    prompt_samples: "프롬프트 예시", reusable_template: "재사용 템플릿",
+    // procedure
+    goal: "목표", assumptions: "전제", steps: "단계", success_check: "성공 확인",
+    // code_generation
+    requirement_restated: "요구사항 정리", files: "코드 파일", key_lines: "핵심 줄",
+    run_steps: "실행 방법", expected_output: "예상 출력", limitations: "한계",
+    // error_diagnosis
+    failing_code: "문제가 된 코드", observed_error: "실제 오류", cause: "원인",
+    minimal_fix: "최소 수정", verify: "확인 방법", prevention: "재발 방지",
+    before: "수정 전", after: "수정 후",
+    // clarification_request
+    understood_so_far: "지금까지 이해한 것", blocking_reason: "막힌 이유",
+    questions: "질문", copy_paste_template: "붙여넣기 틀", partial_help: "우선 도움",
+    // safety_notice
+    risk_type: "위험 종류", risk_explanation: "위험 설명",
+    safer_alternative: "안전한 대안", still_available: "그래도 가능한 것", reason: "이유",
+    // 코드/단계 조각에서 공용으로 쓰이는 키
+    content: "코드", command: "명령어", action: "할 일", code: "코드",
+    expected_result: "예상 결과", path: "파일 경로", purpose: "목적",
+    term: "용어", plain_meaning: "의미", why_needed: "필요한 이유", answer_hint: "힌트",
+    next_steps: "다음 단계",
+  };
+  // 화면에 굳이 안 보여줘도 되는 내부용 키(구분자, 사람이 읽을 텍스트가 아님).
+  const HIDDEN_KEYS = new Set(["type", "step_type", "medium", "id", "language", "shell"]);
+  const CODE_KEYS = ["content", "command", "action", "code"];
+  const ORIGIN_LABEL = { user_provided: "사용자가 준 코드", assistant_authored: "AI가 새로 씀" };
+
+  function labelFor(key) {
+    return LABELS[key] || key;
+  }
+
+  function renderCodeBlock(container, obj) {
+    const codeKey = CODE_KEYS.find((k) => typeof obj[k] === "string");
+    const pre = document.createElement("pre");
+    pre.className = "code-block";
+    pre.textContent = obj[codeKey];
+    container.appendChild(pre);
+    if (obj.origin && ORIGIN_LABEL[obj.origin]) {
+      const tag = document.createElement("div");
+      tag.className = "code-tag";
+      tag.textContent = ORIGIN_LABEL[obj.origin];
+      container.appendChild(tag);
+    }
+    if (obj.expected_result) {
+      const hint = document.createElement("div");
+      hint.className = "code-hint";
+      hint.textContent = "예상 결과: " + obj.expected_result;
+      container.appendChild(hint);
+    }
+  }
+
+  function isCodeLike(obj) {
+    return CODE_KEYS.some((k) => typeof obj[k] === "string");
+  }
+
+  // value를 container 안에 재귀적으로 그린다. label이 있으면 소제목을 붙인다.
+  function renderValue(container, label, value) {
+    if (value === null || value === undefined || value === "") return;
+
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      if (label) {
+        const h = document.createElement("div");
+        h.className = "sec-h";
+        h.textContent = label;
+        sec.appendChild(h);
+      }
+      const b = document.createElement("div");
+      b.className = "sec-b";
+      b.textContent = String(value);
+      sec.appendChild(b);
+      container.appendChild(sec);
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) return;
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      if (label) {
+        const h = document.createElement("div");
+        h.className = "sec-h";
+        h.textContent = label;
+        sec.appendChild(h);
+      }
+      for (const item of value) {
+        if (typeof item === "string") {
+          const li = document.createElement("div");
+          li.className = "sec-b list-item";
+          li.textContent = "· " + item;
+          sec.appendChild(li);
+        } else if (item && typeof item === "object") {
+          const card = document.createElement("div");
+          card.className = "sub-card";
+          renderObjectFields(card, item);
+          sec.appendChild(card);
+        }
+      }
+      container.appendChild(sec);
+      return;
+    }
+
+    if (typeof value === "object") {
+      if (isCodeLike(value)) {
+        const sec = document.createElement("div");
+        sec.className = "sec";
+        if (label || value.title) {
+          const h = document.createElement("div");
+          h.className = "sec-h";
+          h.textContent = value.title || label;
+          sec.appendChild(h);
+        }
+        renderCodeBlock(sec, value);
+        container.appendChild(sec);
+        return;
+      }
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      if (label) {
+        const h = document.createElement("div");
+        h.className = "sec-h";
+        h.textContent = label;
+        sec.appendChild(h);
+      }
+      renderObjectFields(sec, value);
+      container.appendChild(sec);
+    }
+  }
+
+  // 객체의 필드들을 라벨 없이(또는 각자 라벨을 달아) 순서대로 그린다.
+  function renderObjectFields(container, obj) {
+    for (const [key, value] of Object.entries(obj)) {
+      if (HIDDEN_KEYS.has(key)) continue;
+      if (key === "term" && typeof obj.plain_meaning === "string") continue; // term+plain_meaning은 한 줄로
+      if (key === "plain_meaning" && typeof obj.term === "string") {
+        const line = document.createElement("div");
+        line.className = "sec-b list-item";
+        line.textContent = `· ${obj.term}: ${obj.plain_meaning}`;
+        container.appendChild(line);
+        continue;
+      }
+      renderValue(container, labelFor(key), value);
+    }
+  }
+
   function addAiAnswer(data) {
     const div = document.createElement("div");
     div.className = "msg ai";
-    for (const [key, label] of SECTIONS) {
-      if (!data[key]) continue; // 빈 칸은 표시 안 함
-      const sec = document.createElement("div");
-      sec.className = "sec";
-      const h = document.createElement("div");
-      h.className = "sec-h";
-      h.textContent = label;
-      const b = document.createElement("div");
-      b.className = "sec-b";
-      b.textContent = data[key];
-      sec.appendChild(h);
-      sec.appendChild(b);
-      div.appendChild(sec);
+
+    // 한 줄 요약은 항상 맨 위, 라벨 없이 굵게.
+    if (data.one_line_answer) {
+      const lead = document.createElement("div");
+      lead.className = "sec-b lead";
+      lead.textContent = data.one_line_answer;
+      div.appendChild(lead);
     }
-    // confidence 필드 대신: 확실치 않은 답이면 공식 문서 링크를 붙입니다.
-    if (data.doc_link) {
-      const a = document.createElement("a");
-      a.className = "doclink";
-      a.href = data.doc_link;
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.textContent = "Official docs →";
-      div.appendChild(a);
+
+    // 안전 경고: standard가 아니면(caution/restricted) 눈에 띄게 보여준다.
+    const safetyStatus = data.safety?.status;
+    if (safetyStatus && safetyStatus !== "standard") {
+      const banner = document.createElement("div");
+      banner.className = "safety-banner";
+      const parts = [
+        data.safety.reason,
+        ...(data.safety.notices || []),
+        data.safety.safe_alternative ? `대안: ${data.safety.safe_alternative}` : null,
+      ].filter(Boolean);
+      banner.textContent = "⚠ " + parts.join(" · ");
+      div.appendChild(banner);
     }
+
+    // 본문: body.type별로 필드가 다르므로 일반 렌더러로 그린다.
+    if (data.body && typeof data.body === "object") {
+      renderObjectFields(div, data.body);
+    }
+
+    // 신뢰도가 stable이 아니면 짧게 안내(예전 doc_link 대신 실제 스키마 필드 사용).
+    const rel = data.reliability;
+    if (rel && rel.status && rel.status !== "stable") {
+      const note = document.createElement("div");
+      note.className = "sec-b rel-note";
+      note.textContent = "ℹ " + (rel.how_to_check || rel.why_it_matters || "확인이 더 필요할 수 있습니다.");
+      div.appendChild(note);
+    }
+
+    if (Array.isArray(data.next_steps) && data.next_steps.length) {
+      renderValue(div, labelFor("next_steps"), data.next_steps);
+    }
+
     messagesEl.appendChild(div);
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
@@ -222,20 +405,25 @@ if (!window.__cgptChatbotInjected) {
     return () => div.remove();
   }
 
-  // ── 나중에(2번 단계) 여기 안에서만 실제 AI API를 부르면 됩니다.
-  //    반드시 아래 형태의 JSON을 "강제"로 받아서 그대로 돌려주세요:
-  //      { topic, term_meaning, code_explanation, overall_structure, doc_link }
-  //    - 코드 질문이 아니면 code_explanation / overall_structure 는 빈 문자열("")
-  //    - doc_link: 확실치 않은 답이면 공식 문서 링크 (confidence 필드 대체)
-  //    지금은 자리표시(stub) 답변만 돌려줍니다.
-  async function sendToAI(userText) {
-    return {
-      topic: "AI not connected yet",
-      term_meaning: "This is a UI preview. Your question: " + userText,
-      code_explanation: "",
-      overall_structure: "",
-      doc_link: "",
-    };
+  // ── 실제 AI 호출: background.js를 거쳐 우리 중계 서버(server/index.js)에 물어본다.
+  //    API 키는 이 코드에도, background.js에도 없다 — 중계 서버에만 있다.
+  //    중계 서버는 분류→생성→검증→(실패 시) 재생성 파이프라인(generate-validated.js)을 돌리고,
+  //    schema.v1.json을 통과한 JSON만 돌려준다. 실패하면 이 함수가 에러를 던지고
+  //    handleSend()가 안내 메시지를 보여준다.
+  function sendToAI(userText) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: "ask-ai", prompt: userText }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!response?.ok) {
+          reject(new Error(response?.error || "알 수 없는 오류"));
+          return;
+        }
+        resolve(response.data.json);
+      });
+    });
   }
 
   async function handleSend() {

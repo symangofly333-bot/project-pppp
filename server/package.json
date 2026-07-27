@@ -1,0 +1,13 @@
+{
+  "name": "beginner-tutor-relay-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "chatbot.js와 Claude API 사이의 중계 서버 (API 키는 여기에만 둔다)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
