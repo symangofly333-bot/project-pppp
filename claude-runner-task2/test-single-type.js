@@ -70,16 +70,29 @@ async function main() {
     console.log("응답 body.type:", response.json?.body?.type, response.json?.body?.type === targetType ? "(일치)" : "(불일치!)");
     console.log("응답 크기:", JSON.stringify(response.json).length.toLocaleString(), "자");
 
-    // 판정은 언제나 원본 스키마로 한다
-    const validate = new Ajv2020({ allErrors: true, strict: true }).compile(schema);
-    const valid = validate(response.json);
+    // 판정은 언제나 원본 스키마로 한다.
+    const valid = new Ajv2020({ allErrors: true, strict: true }).compile(schema)(response.json);
     console.log("\n원본 schema.v1.json 기준 AJV 판정:", valid ? "통과" : "실패");
-    if (!valid) {
-      console.log(JSON.stringify(validate.errors, null, 2).slice(0, 2000));
-    }
 
-    console.log("\n결론: 가장 큰 축소본이 통과했다면 나머지 7종도 통과할 가능성이 높다.");
-    console.log("      → 다음 단계: 2단계 파이프라인(분류→생성)으로 24회 정식 테스트.");
+    if (!valid) {
+      // 원본은 body가 8종 anyOf라, 실패하면 8개 후보 전부의 오류가 쏟아져 원인이 안 보인다.
+      // 해당 타입 하나로 좁힌(단, 미지원 키워드는 제거하지 않은) 스키마로 다시 대조해
+      // 진짜 어긋난 곳만 뽑는다. reducedSchema는 maxLength/minItems를 그대로 갖고 있으므로,
+      // 생성용 스키마에서 제거된 제약을 모델이 어겼는지도 여기서 드러난다.
+      const diagnose = new Ajv2020({ allErrors: true, strict: true }).compile(reducedSchema);
+      diagnose(response.json);
+      console.log(`\n${targetType} 후보로만 좁혀서 본 실제 위반:`);
+      for (const e of diagnose.errors || []) {
+        console.log(`  ${e.instancePath || "(최상위)"}: ${e.message}` +
+          (e.params && Object.keys(e.params).length ? ` ${JSON.stringify(e.params)}` : ""));
+      }
+
+      // 나중에 눈으로 확인할 수 있게 응답 원문을 남긴다.
+      const outPath = path.join(__dirname, "results", `diag-${targetType}.json`);
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, JSON.stringify(response.json, null, 2));
+      console.log(`\n응답 원문: ${outPath}`);
+    }
   } catch (error) {
     console.log("=== 실패 ===");
     console.log("category:", error.category);
@@ -88,9 +101,9 @@ async function main() {
     if (error.rawError) console.log("원문:", JSON.stringify(error.rawError, null, 2));
 
     if (error.category === "schema_compilation_error" || error.category === "schema_request_error") {
-      console.log("\n결론: 축소본도 이 크기에서는 거부된다.");
-      console.log("      → 한계선이 4,493자(성공 확인)와 이 크기 사이에 있다.");
-      console.log("      → 큰 타입들은 추가로 더 줄여야 한다(중첩 구조 평탄화 등).");
+      console.log("\n결론: 예상대로 거부. 8종 실측 결과 한계선은 4,492자(통과)~6,134자(거부) 사이다.");
+      console.log("      작은 4종(safety_notice/concept_explanation/prompt_help/clarification_request)만 통과한다.");
+      console.log("      → 큰 4종은 강제 구조화 출력을 포기하고 프롬프트+AJV+재시도로 간다(PROJECT.md 7절).");
     }
   }
 }

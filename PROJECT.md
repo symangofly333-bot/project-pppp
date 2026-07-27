@@ -244,19 +244,23 @@ Node.js, Claude Code CLI 설치. Claude 구독 계정 로그인(계정 혼동 �
 - **기각된 가설: "선택 필드가 많아서 Claude의 선택 매개변수 24개 제한에 걸린다"** — 8종 전부 선택 필드가 **0개**다(모든 속성이 `required`). 무관하다.
 - **한계선은 단일 수치로 환원되지 않는다.** Claude 내부 문법(grammar) 크기는 속성 수·중첩 깊이·`$ref` 반복·유니온이 함께 만들어낸다. 다만 작은 4종과 큰 4종은 아래 지표 전부에서 깨끗하게 갈린다:
 
-| body.type | 펼친 속성 | 객체 수 | 유니온 | 최대 깊이 | 라이브 |
-|---|---|---|---|---|---|
-| safety_notice | 68 | 23 | 2 | 9 | 미확인 |
-| concept_explanation | 76 | 26 | 2 | 9 | ✅ 통과 |
-| prompt_help | 77 | 26 | 2 | 9 | 미확인 |
-| clarification_request | 82 | 26 | 2 | 9 | 미확인 |
-| code_explanation | 145 | 43 | 5 | 9 | 미확인 |
-| procedure | 186 | 49 | 10 | 16 | 미확인 |
-| error_diagnosis | 195 | 52 | 11 | 12 | 미확인 |
-| code_generation | 223 | 57 | 10 | 16 | ❌ 거부 |
+**8종 전부 라이브 실측 완료:**
 
+| body.type | 크기 | 펼친 속성 | 객체 수 | 유니온 | 최대 깊이 | API | AJV |
+|---|---|---|---|---|---|---|---|
+| safety_notice | 4,273자 | 68 | 23 | 2 | 9 | ✅ | ✅ |
+| concept_explanation | 4,493자 | 76 | 26 | 2 | 9 | ✅ | ✅ |
+| prompt_help | 4,335자 | 77 | 26 | 2 | 9 | ✅ | ❌ 조사중 |
+| clarification_request | 4,492자 | 82 | 26 | 2 | 9 | ✅ | ❌ 조사중 |
+| code_explanation | 6,508자 | 145 | 43 | 5 | 9 | ❌ 거부 | — |
+| procedure | 6,135자 | 186 | 49 | 10 | 16 | ❌ 거부 | — |
+| error_diagnosis | 6,134자 | 195 | 52 | 11 | 12 | ❌ 거부 | — |
+| code_generation | 7,199자 | 223 | 57 | 10 | 16 | ❌ 거부 | — |
+
+- **한계선은 4,492자(통과)~6,134자(거부) 사이.** 작은 4종만 강제 구조화 출력이 가능하고, 큰 4종은 불가능하다.
+- `code_explanation`은 모양 가짓수가 18뿐인데도 거부됐다 → **"모양 가짓수(anyOf 조합)가 원인"이라는 기각된 가설이 한 번 더 확인됨.**
 - `code_generation`에서 `file_source_code`가 7회, `source_code`가 5회 재사용된다. **`$ref` 자체가 아니라 큰 구조를 여러 위치에서 반복 참조하는 것**이 문법을 부풀린다.
-- **⚠️ 실측으로 거부가 확인된 건 `code_generation` 하나뿐이다.** 나머지 3개 큰 타입(code_explanation/procedure/error_diagnosis)은 추정일 뿐이므로, 스키마를 뜯어고치기 **전에** 1회씩 찔러봐야 한다.
+- **별개 문제 발견:** `prompt_help`/`clarification_request`는 API는 통과했으나 원본 스키마 AJV 판정에 실패했다. 유력한 원인은 생성용 스키마에서 제거한 미지원 키워드(`maxLength`/`minItems` 등)를 모델이 어긴 것. `test-single-type.js`가 해당 타입 후보로만 좁혀 위반 지점을 출력하도록 고쳤고, 재확인 대기 중.
 - 관련: databank **PD1(검증 비용의 역설)** — 이 스키마는 실제 모델에 한 번도 붙여보지 않은 채 정교하게 설계됐다. 지금 그 청구서가 온 것.
 
 **교차검증(ChatGPT) 결론 — 채택한 방향:**
