@@ -7,6 +7,9 @@ config.js
 .env.*
 *.key
 
+# 러너 실행 결과 (계속 쌓이는 산출물, 버전관리 불필요)
+claude-runner-task2/results/
+
 # OS/에디터
 .DS_Store
 Thumbs.db

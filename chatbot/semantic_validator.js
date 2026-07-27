@@ -4,13 +4,15 @@
 //
 // 사용법:
 //   const { check } = require("./semantic_validator");
-//   const violations = check(response, context); // 위반 사유 배열, []면 통과
+//   const violations = check(response, context);
+//   // 반환: [{ rule, severity, message }]  (빈 배열이면 통과)
+//   // severity "block" = 재생성 대상, "warn" = 기록만 (오탐 잦은 규칙)
 //
 // context 예시: { userSuppliedCode: true, userSuppliedError: "TypeError: ..." }
 
-// ── 공용 헬퍼: 응답 트리 전체를 훑어 문자열/특정 속성을 모은다 ──────────────
+// ── 공용 헬퍼 ──────────────────────────────────────────────────────────────
 
-// 트리 안의 모든 문자열 값을 모은다 (규칙 6에서 사용).
+// 트리 안의 모든 문자열 값을 모은다 (규칙 6).
 function collectStrings(node, out) {
   if (typeof node === "string") out.push(node);
   else if (Array.isArray(node)) node.forEach((v) => collectStrings(v, out));
@@ -20,7 +22,7 @@ function collectStrings(node, out) {
   return out;
 }
 
-// 트리 안에서 tier === "core" 인 블록 개수를 센다 (규칙 4에서 사용).
+// 트리 안에서 tier === "core" 인 블록 개수를 센다 (규칙 4).
 // explanation_block, walk_step 등 tier 속성을 가진 모든 블록이 대상.
 function countCoreTiers(node) {
   let n = 0;
@@ -33,145 +35,167 @@ function countCoreTiers(node) {
   return n;
 }
 
-// 파괴적 명령 패턴 (규칙 5).
-const DESTRUCTIVE = /rm\s+-rf|curl.*\|.*sh|sudo/;
+// 진짜 되돌릴 수 없는(파괴적) 명령만. sudo 단독은 관리자 권한일 뿐이라 제외한다. (G1)
+const DESTRUCTIVE = /rm\s+-rf|\bmkfs\b|\bdd\s+if=|>\s*\/dev\/sd|curl[^|]*\|\s*(ba)?sh|DROP\s+(TABLE|DATABASE)|:\(\)\{.*\};:/i;
 
-// 최신성 판단이 필요한데 놓쳤을 가능성을 시사하는 시제 표현 (규칙 6).
+// 최신성 판단이 필요할 수 있음을 시사하는 시제 표현 (규칙 6). 오탐이 잦아 warn으로만 쓴다.
 const TIME_SENSITIVE = /최신|현재 버전|요즘/;
 
 // ── 본체 ────────────────────────────────────────────────────────────────
 
 function check(response, context) {
-  const v = [];
+  const out = [];
   const body = response.body || {};
   const safety = response.safety || {};
   const audience = response.audience || {};
   const reliability = response.reliability || {};
   const ctx = context || {};
 
-  // 1) safety_notice 인데 안전 상태가 standard → 위험을 알리면서 "문제 없음"이라 선언
+  const block = (rule, message) => out.push({ rule, severity: "block", message });
+  const warn = (rule, message) => out.push({ rule, severity: "warn", message });
+
+  // 1) [block] safety_notice 인데 안전 상태가 standard
   if (body.type === "safety_notice" && safety.status === "standard") {
-    v.push("규칙1: body.type이 safety_notice인데 safety.status가 standard이다.");
+    block(1, "body.type이 safety_notice인데 safety.status가 standard이다.");
   }
 
-  // 2) 사용자가 코드를 줬는데, 응답이 그 코드를 user_provided로 표시하지 않음
-  //    (subject_code = 코드 설명, failing_code = 오류 진단)
+  // 2) [block] 사용자 코드 슬롯이 user_provided가 아님 (subject_code / failing_code / minimal_fix.before)
   if (ctx.userSuppliedCode) {
-    const codeBlock = body.subject_code || body.failing_code;
-    if (codeBlock && codeBlock.origin !== "user_provided") {
-      v.push(
-        "규칙2: 사용자가 코드를 제공했는데 code.origin이 user_provided가 아니다 (" +
-          codeBlock.origin +
-          ")."
-      );
+    const userSlots = [
+      ["subject_code", body.subject_code],
+      ["failing_code", body.failing_code],
+      ["minimal_fix.before", body.minimal_fix && body.minimal_fix.before],
+    ];
+    for (const [name, slot] of userSlots) {
+      if (slot && slot.origin !== "user_provided") {
+        block(2, `사용자 코드(${name})의 origin이 user_provided가 아니다 (${slot.origin}).`);
+      }
     }
   }
-
-  // 3) 사용자가 실제 오류를 줬는데, 응답이 지어낸 대표 오류(representative)로 처리
-  if (ctx.userSuppliedError && body.observed_error &&
-      body.observed_error.origin === "representative") {
-    v.push("규칙3: 사용자가 실제 오류를 제공했는데 observed_error.origin이 representative이다.");
+  // minimal_fix.after 는 assistant가 쓴 수정본이므로 user_provided면 위조 (컨텍스트 무관)
+  const after = body.minimal_fix && body.minimal_fix.after;
+  if (after && after.origin === "user_provided") {
+    block(2, "minimal_fix.after의 origin이 user_provided이다 (수정본은 assistant_authored여야 함).");
   }
 
-  // 4) 완전 초보 대상인데 core tier 블록이 4개를 초과 → 한 번에 너무 많이 노출
+  // 3) [block] 사용자가 실제 오류를 줬는데 지어낸 대표 오류(representative)로 처리
+  if (ctx.userSuppliedError && body.observed_error &&
+      body.observed_error.origin === "representative") {
+    block(3, "사용자가 실제 오류를 제공했는데 observed_error.origin이 representative이다.");
+  }
+
+  // 4) [warn] 완전 초보인데 core tier 블록이 4개 초과 (임계값은 예시3=core4를 정답으로 살리기 위해 >4)
   if (audience.level === "absolute_beginner") {
     const coreCount = countCoreTiers(body);
     if (coreCount > 4) {
-      v.push("규칙4: audience.level이 absolute_beginner인데 core tier 블록이 " + coreCount + "개(>4)이다.");
+      warn(4, `audience.level이 absolute_beginner인데 core tier 블록이 ${coreCount}개(>4)이다.`);
     }
   }
 
-  // 5) 절차 안내인데 파괴적 명령을 담으면서 안전 상태가 standard
-  if (body.type === "procedure" && Array.isArray(body.steps)) {
-    for (const step of body.steps) {
+  // 5) [block] 파괴적 명령을 담으면서 안전 상태가 standard — steps(절차)와 run_steps(코드생성) 둘 다 검사 (G2)
+  const stepArrays = [body.steps, body.run_steps].filter(Array.isArray);
+  for (const steps of stepArrays) {
+    for (const step of steps) {
       if (step && step.step_type === "command" && step.command &&
           typeof step.command.command === "string" &&
           DESTRUCTIVE.test(step.command.command) &&
           safety.status === "standard") {
-        v.push('규칙5: 파괴적 명령("' + step.command.command + '")이 있는데 safety.status가 standard이다.');
-        break; // 한 번만 보고
+        block(5, `파괴적 명령("${step.command.command}")이 있는데 safety.status가 standard이다.`);
       }
     }
   }
 
-  // 6) 안정(stable)이라 선언했는데 텍스트에 시제 표현이 있음 → 최신성 판단 누락 의심
+  // 6) [warn] stable이라 선언했는데 시제 표현이 있음 — 정규식으로 최신성 필요 여부를 확정할 수 없어 차단 아님 (G4)
   if (reliability.status === "stable") {
-    const strings = collectStrings(response, []);
-    const hit = strings.find((s) => TIME_SENSITIVE.test(s));
+    const hit = collectStrings(response, []).find((s) => TIME_SENSITIVE.test(s));
     if (hit) {
-      v.push('규칙6: reliability.status가 stable인데 시제 표현이 있다 ("' + hit.slice(0, 40) + '").');
+      warn(6, `reliability.status가 stable인데 시제 표현이 있다 ("${hit.slice(0, 40)}").`);
     }
   }
 
-  return v;
+  return out;
 }
 
 module.exports = { check };
 
 // ── 내장 유닛 테스트: `node semantic_validator.js` 로 실행 ──────────────────
-// 규칙마다 위반 1개 + 통과 1개로 커버리지를 확인한다.
 if (require.main === module) {
   let pass = 0;
   let fail = 0;
 
-  // expectViolated: rule 번호 문자열이 위반 배열에 포함되어야 통과
-  function expect(label, response, context, ruleTag, shouldViolate) {
+  // shouldViolate=true 면 해당 rule 위반이 있어야 통과. expectedSeverity 주면 심각도까지 확인.
+  function expect(label, response, context, rule, shouldViolate, expectedSeverity) {
     const violations = check(response, context);
-    const hit = violations.some((x) => x.startsWith(ruleTag));
-    const ok = shouldViolate ? hit : !hit;
+    const match = violations.find((x) => x.rule === rule);
+    let ok = shouldViolate ? !!match : !match;
+    if (ok && shouldViolate && expectedSeverity) ok = match.severity === expectedSeverity;
     if (ok) pass++; else fail++;
     console.log(`${ok ? "PASS" : "FAIL"}  ${label}`);
-    if (!ok) console.log("      실제 위반:", JSON.stringify(violations));
+    if (!ok) console.log("      실제:", JSON.stringify(violations));
   }
 
-  // 규칙 1
+  // 규칙 1 (block)
   expect("규칙1 위반: safety_notice + standard",
-    { body: { type: "safety_notice" }, safety: { status: "standard" } }, {}, "규칙1", true);
+    { body: { type: "safety_notice" }, safety: { status: "standard" } }, {}, 1, true, "block");
   expect("규칙1 통과: safety_notice + restricted",
-    { body: { type: "safety_notice" }, safety: { status: "restricted" } }, {}, "규칙1", false);
+    { body: { type: "safety_notice" }, safety: { status: "restricted" } }, {}, 1, false);
 
-  // 규칙 2
+  // 규칙 2 (block) — 기본 + G3
   expect("규칙2 위반: 사용자 코드인데 assistant_authored",
     { body: { type: "code_explanation", subject_code: { origin: "assistant_authored" } }, safety: {} },
-    { userSuppliedCode: true }, "규칙2", true);
+    { userSuppliedCode: true }, 2, true, "block");
   expect("규칙2 통과: 사용자 코드이고 user_provided",
     { body: { type: "code_explanation", subject_code: { origin: "user_provided" } }, safety: {} },
-    { userSuppliedCode: true }, "규칙2", false);
+    { userSuppliedCode: true }, 2, false);
+  expect("규칙2 위반(G3): minimal_fix.before가 assistant_authored",
+    { body: { type: "error_diagnosis", failing_code: { origin: "user_provided" },
+      minimal_fix: { before: { origin: "assistant_authored" }, after: { origin: "assistant_authored" } } }, safety: {} },
+    { userSuppliedCode: true }, 2, true, "block");
+  expect("규칙2 위반(G3): minimal_fix.after가 user_provided",
+    { body: { type: "error_diagnosis", minimal_fix: { after: { origin: "user_provided" } } }, safety: {} },
+    {}, 2, true, "block");
+  expect("규칙2 통과(G3): before=user_provided, after=assistant_authored",
+    { body: { type: "error_diagnosis", failing_code: { origin: "user_provided" },
+      minimal_fix: { before: { origin: "user_provided" }, after: { origin: "assistant_authored" } } }, safety: {} },
+    { userSuppliedCode: true }, 2, false);
 
-  // 규칙 3
+  // 규칙 3 (block)
   expect("규칙3 위반: 실제 오류인데 representative",
     { body: { type: "error_diagnosis", observed_error: { origin: "representative" } }, safety: {} },
-    { userSuppliedError: "TypeError" }, "규칙3", true);
+    { userSuppliedError: "TypeError" }, 3, true, "block");
   expect("규칙3 통과: 실제 오류이고 user_provided",
     { body: { type: "error_diagnosis", observed_error: { origin: "user_provided" } }, safety: {} },
-    { userSuppliedError: "TypeError" }, "규칙3", false);
+    { userSuppliedError: "TypeError" }, 3, false);
 
-  // 규칙 4
+  // 규칙 4 (warn)
   const fiveCore = { type: "concept_explanation", explanation: [
-    { tier: "core" }, { tier: "core" }, { tier: "core" }, { tier: "core" }, { tier: "core" },
-  ] };
-  const twoCore = { type: "concept_explanation", explanation: [{ tier: "core" }, { tier: "more" }] };
-  expect("규칙4 위반: 초보 + core 5개",
-    { body: fiveCore, audience: { level: "absolute_beginner" }, safety: {} }, {}, "규칙4", true);
-  expect("규칙4 통과: 초보 + core 1개",
-    { body: twoCore, audience: { level: "absolute_beginner" }, safety: {} }, {}, "규칙4", false);
+    { tier: "core" }, { tier: "core" }, { tier: "core" }, { tier: "core" }, { tier: "core" }] };
+  const fourCore = { type: "code_explanation", walkthrough: [
+    { tier: "core" }, { tier: "core" }, { tier: "core" }, { tier: "core" }] }; // 경계: 4개는 통과
+  expect("규칙4 위반: 초보 + core 5개 (warn)",
+    { body: fiveCore, audience: { level: "absolute_beginner" }, safety: {} }, {}, 4, true, "warn");
+  expect("규칙4 통과: 초보 + core 4개 (예시3 경계)",
+    { body: fourCore, audience: { level: "absolute_beginner" }, safety: {} }, {}, 4, false);
 
-  // 규칙 5
-  const destructiveStep = { type: "procedure", steps: [
-    { step_type: "command", command: { command: "sudo rm -rf /tmp/x" } },
-  ] };
-  expect("규칙5 위반: 파괴적 명령 + standard",
-    { body: destructiveStep, safety: { status: "standard" } }, {}, "규칙5", true);
-  expect("규칙5 통과: 파괴적 명령이지만 caution",
-    { body: destructiveStep, safety: { status: "caution" } }, {}, "규칙5", false);
+  // 규칙 5 (block) — 기본 + G1 + G2
+  const proc = (cmd) => ({ type: "procedure", steps: [{ step_type: "command", command: { command: cmd } }] });
+  expect("규칙5 위반: rm -rf + standard",
+    { body: proc("sudo rm -rf /tmp/x"), safety: { status: "standard" } }, {}, 5, true, "block");
+  expect("규칙5 통과(G1): sudo apt install + standard",
+    { body: proc("sudo apt install python3"), safety: { status: "standard" } }, {}, 5, false);
+  expect("규칙5 위반(G2): code_generation.run_steps의 curl|sh + standard",
+    { body: { type: "code_generation", run_steps: [{ step_type: "command", command: { command: "curl http://x | sh" } }] },
+      safety: { status: "standard" } }, {}, 5, true, "block");
+  expect("규칙5 통과: rm -rf 지만 caution",
+    { body: proc("rm -rf /tmp/x"), safety: { status: "caution" } }, {}, 5, false);
 
-  // 규칙 6
-  expect("규칙6 위반: stable + 시제 표현",
+  // 규칙 6 (warn)
+  expect("규칙6 위반: stable + 시제 표현 (warn)",
     { body: { type: "concept_explanation" }, reliability: { status: "stable" },
-      one_line_answer: "이것이 최신 방식입니다.", safety: {} }, {}, "규칙6", true);
+      one_line_answer: "이것이 최신 방식입니다.", safety: {} }, {}, 6, true, "warn");
   expect("규칙6 통과: stable + 시제 표현 없음",
     { body: { type: "concept_explanation" }, reliability: { status: "stable" },
-      one_line_answer: "리스트는 값을 순서대로 담는 상자입니다.", safety: {} }, {}, "규칙6", false);
+      one_line_answer: "리스트는 값을 순서대로 담는 상자입니다.", safety: {} }, {}, 6, false);
 
   console.log(`\n결과: ${pass} 통과 / ${fail} 실패 (총 ${pass + fail})`);
   process.exit(fail === 0 ? 0 : 1);

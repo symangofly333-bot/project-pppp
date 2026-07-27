@@ -11,6 +11,8 @@
 - 코드를 짜거나 바꾸면 **바뀐 부분만** 발췌해서 보여줄 것.
 - 실제로 파일을 만들기 전에 **계획을 먼저 설명하고 승인**을 받을 것.
 - 사용자는 직설적이며, 틀린 지적은 강하게 반박한다. 반박당하면 방어하지 말고 검토하되, 근거가 있으면 물러서지도 말 것.
+- **큰 변화(설계 결정, 방향 전환, 새 확정 사항)가 생기면 이 PROJECT.md를 즉시 업데이트하고 git에도 커밋할 것.**
+- 현재 Claude Sonnet과 Opus를 함께 쓴다. Opus는 토큰 소비가 많지만 복잡하거나 중요한 작업에 더 적합하다 — **Opus로 전환할 상황이 오면 출력 마지막에 짧게 언급할 것.**
 
 ---
 
@@ -172,13 +174,19 @@ pppp/
 │   ├─ chatbot.js                 챗봇 팝업 (Phase 2, 껍데기 + 표시구조)
 │   └─ background.js              아이콘 클릭 → 가이드 재시작
 │
-└─ chatbot/                       ← 챗봇 응답 스키마 설계/검증 (별도 AI 제작)
-    ├─ schema.v1.json             원본 스키마 (판정 기준 = 진짜 계약)
-    ├─ schema.v1.openai-strict.json  생성 요청용 변환본
-    ├─ examples.json              통과 예시 8종
-    ├─ negative.js                반례 20종
-    ├─ validate.js                ajv 검증 스크립트
-    └─ semantic_validator.js      의미 검증기
+├─ chatbot/                       ← 챗봇 응답 스키마 설계/검증 (별도 AI 제작)
+│   ├─ schema.v1.json             원본 스키마 (판정 기준 = 진짜 계약)
+│   ├─ schema.v1.openai-strict.json  생성 요청용 변환본 (OpenAI용, Claude엔 안 씀)
+│   ├─ examples.json              통과 예시 8종
+│   ├─ negative.js                반례 20종
+│   ├─ validate.js                ajv 검증 스크립트
+│   └─ semantic_validator.js      의미 검증기
+│
+└─ claude-runner-task2/           ← Claude 실제 API 생성 테스트 러너 (별도 AI 제작 + 수정)
+    ├─ claude-adapter.js          Claude Messages API 어댑터 (output_config.format)
+    ├─ run-eval.js                8종×3회=24회 생성 테스트 + 리포트 생성
+    ├─ test-single-type.js        진단용: body 1종만 남긴 축소 스키마로 1회 테스트
+    └─ offline-check.js           오프라인 검증 (ajv + semantic_validator, API 호출 없음)
 ```
 
 ### Phase 0 — 개발 환경 ✅ 완료
@@ -216,6 +224,17 @@ Node.js, Claude Code CLI 설치. Claude 구독 계정 로그인(계정 혼동 �
 5. 파괴적 명령(rm -rf / sudo)인데 safety=standard
 6. reliability=stable인데 시제 표현("최신"/"현재 버전") 있음
 
+**API 제공사: Claude로 확정** (`claude-sonnet-5`, `output_config.format` 구조화 출력 사용).
+
+**🚨 실제 생성 테스트에서 발견한 핵심 사실 (Claude용 스키마 재설계 필요):**
+- `schema.v1.json`을 8종(`body.type`) 통째로 한 번에 Claude에 보내면 **거부됨**: `"The compiled grammar is too large, which would cause performance issues."`
+- `maxLength`/`minItems`/`maxItems` 같은 Claude 미지원 키워드를 제거해도 이 문제는 그대로 (별개 원인)
+- **8종 중 1종만 남기고, 안 쓰는 `$defs`까지 다 잘라낸(33개→11개) 축소 스키마로는 성공** — 통짜 스키마의 "8종을 한 번에"가 원인 확정
+- **결론: 답변 생성은 2단계 파이프라인으로 간다**
+  1. 1단계(분류) — 질문이 오면 8종 중 어떤 타입인지 가볍게 먼저 판단
+  2. 2단계(생성) — 그 타입 하나에 해당하는 축소 스키마로 실제 답변 생성
+- 아직 안 한 것: 이 2단계 파이프라인 실제 구현, 8종 전체에 대한 축소 스키마 자동 생성, 24회 정식 재테스트(Task 2), 리포트(Task 3)
+
 ---
 
 ## 8. 남은 로드맵
@@ -232,9 +251,9 @@ Node.js, Claude Code CLI 설치. Claude 구독 계정 로그인(계정 혼동 �
 
 | 항목 | 상태 |
 |---|---|
-| **API 제공사** | 미정 (OpenAI vs Claude). 정해야 실제 호출 코드 확정 |
-| **실제 API 생성 테스트 (Task 2·3)** | 보류. 유료 호출 + 키 필요. 제공사/예산 정해지면 진행 |
-| **JSON 구조 확정** | 잠정. `schema.v1.json`(정교) vs `chatbot.js` stub(topic/…) **두 스키마 공존 중** — 채택 시 렌더링 대공사 |
+| **API 제공사** | ✅ **Claude로 확정** (`claude-sonnet-5`) |
+| **실제 API 생성 테스트 (Task 2·3)** | 🔄 진행 중. 통짜 스키마 거부 확인 → 1종 축소판 성공 확인. **다음: 8종 전체를 축소 스키마로 만들고 2단계(분류+생성) 파이프라인 구현 → 24회 정식 재테스트 → 리포트** |
+| **JSON 구조 확정** | 잠정 + **구조 변경 필요**. `schema.v1.json`을 통짜로는 못 씀 — 타입별 축소 스키마로 쪼개야 함. `chatbot.js` stub(topic/…)과도 별개로 여전히 공존 중 — 채택 시 렌더링 대공사 |
 | **실사용자 테스트** | 미실행. 6-1 참고 |
 | **Discord 게시 여부** | 불명. 실제 상태 확인 필요 |
 
