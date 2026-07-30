@@ -151,8 +151,8 @@ Put it on its own line starting with "Tip:" so it reads as a separate aside, not
 part of the main answer.
 
 Openings that work well:
-- You had to ask them for more information. This one is worth using close to
-  every time it comes up — it's cheap and directly useful, unlike the others.
+- You had to ask them for more information. Use this one close to every time
+  it comes up — treat the rest of this list as occasional, but not this one.
 - You just explained a limitation or behavior of AI itself (why it can sound
   confident while being wrong, why it doesn't remember past chats, and so on).
   Don't stop at naming the limitation — give one concrete way to work with it.
