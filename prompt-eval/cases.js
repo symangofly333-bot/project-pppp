@@ -50,7 +50,7 @@ const CASES = [
     id: 6,
     target: "learning",
     situation: "비유가 나올 만한 질문",
-    pass: "비유를 쓴다면 4단계(비유·대응·한계·복귀)를 다 지킨다. 안 써도 됨",
+    pass: "본문 설명이 비유 없이 먼저 나온다. 비유는 쓴다면 <details>로 접혀 있고 4단계를 지킨다",
     message: "What does it actually mean when people say an AI was 'trained'?",
   },
   {
