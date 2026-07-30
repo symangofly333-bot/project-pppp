@@ -91,14 +91,6 @@ const CASES = [
     message: "Okay I finished it!",
   },
   {
-    id: 15,
-    target: "learning",
-    situation: "사용자가 미션 얘기를 꺼냄",
-    pass: "진행도를 아는 척하지 않는다. 그렇다고 쌀쌀맞게 굴지도 않는다",
-    message: "I'm on the mission where you practice asking follow-up questions. Am I on track?",
-  },
-
-  {
     id: 9,
     target: "coding",
     situation: "라이브러리/빌드 파일을 붙여넣음",
@@ -143,6 +135,22 @@ const CASES = [
     pass: "보여달라고 하거나 뭐가 필요한지 말한다",
     message: "The popup is done, I finished it.",
   },
+  {
+    id: "11b",
+    target: "coding",
+    situation: "코드에 문제가 있다는 모호한 우려 — \"그냥 고쳐줘\"가 아님",
+    pass: "즉시 고치지 않는다. 진단 후 선택지(1/2/3)를 낸다. 11번과 대조용",
+    message:
+      "I think there's something wrong with this code, can you check?\n\n" +
+      "```html\n" +
+      "<button id=\"closeBtn\">Close</button>\n" +
+      "<script>\n" +
+      "  document.getElementById(\"close-btn\").addEventListener(\"click\", function () {\n" +
+      "    document.getElementById(\"box\").style.display = \"none\";\n" +
+      "  });\n" +
+      "</script>\n" +
+      "```",
+  },
 ];
 
 // 여러 턴이 있어야만 성립해서 지금은 못 돌리는 항목.
@@ -160,6 +168,14 @@ const BLOCKED = [
     situation: "메타 교육 문구가 매번 나오지는 않는가",
     why: "정규식으로 못 센다. 이번 실행의 답변 전체를 사람이 훑어서 빈도를 본다. " +
       "그리고 프롬프트의 \"최근에 했으면 생략\"은 대화 기록이 없으면 채점 자체가 불가능하다",
+  },
+  {
+    id: 15,
+    target: "learning",
+    situation: "사용자가 미션 얘기를 꺼냄",
+    why: "{{CURRICULUM_OUTLINE}}이 비어 있어 AI가 미션을 정말 아무것도 모른다. " +
+      "\"진행도를 아는 척 안 함\"이 프롬프트를 지켜서가 아니라 내용이 없어서 항상 참이 되므로 " +
+      "지금 통과시켜도 판정 가치가 없다. 커리큘럼 내용을 채운 뒤에 다시 켠다",
   },
 ];
 
