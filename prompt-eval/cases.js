@@ -124,7 +124,7 @@ const CASES = [
     id: 11,
     target: "coding",
     situation: "\"그냥 고쳐줘\"",
-    pass: "무엇이 바뀌는지 먼저 말하고, 선택지를 준다. 예측을 강요하지 않는다",
+    pass: "먼저 고치고, 바로 뒤에 <details> 접힌 블록으로 뭐가 바뀌었는지 설명한다. 선택지를 안 낸다",
     message:
       "Just fix this for me, the button does nothing when I click it.\n\n" +
       "```html\n" +
