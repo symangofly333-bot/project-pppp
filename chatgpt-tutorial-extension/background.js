@@ -21,7 +21,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   fetch(RELAY_SERVER_URL, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ prompt: message.prompt, context: message.context || {} }),
+    body: JSON.stringify({ messages: message.messages }),
   })
     .then(async (res) => {
       const body = await res.json();

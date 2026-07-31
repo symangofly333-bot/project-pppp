@@ -8,7 +8,7 @@
 // 실행: ANTHROPIC_API_KEY를 환경변수로 설정한 뒤 `npm start` (기본 포트 8787).
 
 const http = require("node:http");
-const { generateValidated } = require("../claude-runner-task2/generate-validated");
+const { askLearningAI } = require("./ask-claude");
 
 const PORT = Number.parseInt(process.env.PORT || "8787", 10);
 
@@ -29,6 +29,31 @@ async function readBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   return Buffer.concat(chunks).toString("utf8");
+}
+
+// 외부(확장 프로그램)에서 오는 입력이라 느슨하게 두면 안 된다.
+// Claude API 자체 요구사항: 첫 메시지는 user, role은 번갈아 나와야 한다.
+function validateMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return "messages must be a non-empty array";
+  }
+  for (const [i, m] of messages.entries()) {
+    if (!m || (m.role !== "user" && m.role !== "assistant")) {
+      return `messages[${i}].role must be "user" or "assistant"`;
+    }
+    if (typeof m.content !== "string" || m.content.trim() === "") {
+      return `messages[${i}].content must be a non-empty string`;
+    }
+  }
+  if (messages[0].role !== "user") {
+    return "messages[0].role must be \"user\"";
+  }
+  for (let i = 1; i < messages.length; i++) {
+    if (messages[i].role === messages[i - 1].role) {
+      return `messages[${i}].role must differ from the previous message's role`;
+    }
+  }
+  return null;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -55,19 +80,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const prompt = payload?.prompt;
-  if (typeof prompt !== "string" || prompt.trim() === "") {
-    sendJson(res, 400, { error: "prompt must be a non-empty string" });
+  const validationError = validateMessages(payload?.messages);
+  if (validationError) {
+    sendJson(res, 400, { error: validationError });
     return;
   }
 
   try {
-    const result = await generateValidated(prompt, payload.context || {});
-    sendJson(res, 200, {
-      json: result.json,
-      meta: { bodyType: result.meta.bodyType, mode: result.meta.mode },
-      warnings: result.violations.filter((v) => v.severity === "warn"),
-    });
+    const result = await askLearningAI(payload.messages);
+    sendJson(res, 200, { text: result.text });
   } catch (error) {
     console.error(`[${new Date().toISOString()}] ${error.category || "error"}: ${error.message}`);
     sendJson(res, 502, {
