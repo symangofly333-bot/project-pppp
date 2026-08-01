@@ -46,7 +46,8 @@
   .mission-banner .label { font-size: 11px; color: var(--gold-800); font-weight: 600; letter-spacing: .03em; }
   .mission-banner .title { font-size: 14px; font-weight: 600; color: var(--gold-900); }
   .mission-banner .checklist { font-size: 13px; color: var(--gold-800); }
-  .mission-banner .checklist div { padding: 2px 0; }
+  .mission-banner .check-item { display: flex; align-items: center; gap: 8px; padding: 2px 0; cursor: pointer; }
+  .mission-banner .check-item input { accent-color: var(--gold-200); width: 15px; height: 15px; cursor: pointer; }
   .mission-banner .row { display:flex; align-items:center; justify-content: space-between; gap: 12px; margin-top: 4px; }
   .mission-banner .hint { font-size: 12px; color: var(--gold-800); opacity: .8; }
   .complete-btn {
@@ -96,6 +97,45 @@
     background: var(--gold-200); color: var(--gold-900); cursor: pointer;
   }
   .mission-card .done-badge { flex: 0 0 auto; font-size: 12px; color: var(--gold-800); background: var(--gold-50); padding: 6px 12px; border-radius: 16px; }
+
+  /* 추천 미션 1개 + "전체 보기" — 미션이 3개뿐이라 카테고리 그룹핑 대신 이 정도로 허브 느낌만 낸다 */
+  .recommend-card { border: 1px solid var(--gold-200); border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; background: var(--gold-50); }
+  .recommend-card .tag { font-size: 11px; font-weight: 600; color: var(--gold-800); letter-spacing: .03em; margin: 0 0 6px; }
+  .recommend-card .title { font-size: 16px; font-weight: 700; color: var(--gold-900); margin: 0 0 6px; }
+  .recommend-card .desc { font-size: 13px; color: var(--gold-800); margin: 0 0 14px; }
+  .recommend-card .start-btn { border: none; border-radius: 8px; padding: 9px 18px; font-size: 13px; font-weight: 600; background: var(--gold-200); color: var(--gold-900); cursor: pointer; }
+  .all-missions-toggle { font-size: 13px; color: var(--text-secondary); cursor: pointer; margin-bottom: 12px; display: inline-block; }
+  .all-missions-toggle:hover { color: var(--gold-800); }
+
+  /* 팝업 AI 안내 화면 */
+  .popup-intro-view { flex: 1; padding: 32px 40px; display: none; }
+  .popup-intro-view.active { display: block; }
+  .popup-intro-view h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+  .popup-intro-view .sub { font-size: 13px; color: var(--text-secondary); margin: 0 0 20px; max-width: 480px; line-height: 1.6; }
+  .popup-intro-view .start-btn {
+    border: none; border-radius: 8px; padding: 10px 20px; font-size: 13px; font-weight: 600;
+    background: var(--gold-200); color: var(--gold-900); cursor: pointer;
+  }
+
+  /* 새 대화 랜딩(비어있을 때만) — web/mockup-sidebar.html과 같은 모양 */
+  .landing { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; }
+  .landing.hidden { display: none; }
+  .landing-title { font-size: 22px; font-weight: 500; margin: 0 0 1.5rem; }
+  .landing-input-row {
+    width: 100%; max-width: 520px; display: flex; align-items: center; gap: 8px;
+    border: 0.5px solid var(--border); border-radius: 24px; padding: 6px 8px 6px 18px; background: var(--surface-1);
+  }
+  .landing-input-row input[type="text"] { flex: 1; border: none; background: transparent; font-size: 14px; outline: none; color: #1a1a1a; }
+  .landing-send {
+    flex: 0 0 auto; width: 32px; height: 32px; border-radius: 50%; border: none;
+    background: var(--gold-200); color: var(--gold-900); cursor: pointer;
+  }
+  .chips { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; justify-content: center; }
+  .chip {
+    font-size: 12px; color: var(--text-secondary); border: 0.5px solid var(--border); border-radius: 16px;
+    padding: 5px 12px; cursor: pointer; background: #fff;
+  }
+  .chip:hover { background: #f5f5f5; }
 </style>
 </head>
 <body>
@@ -104,7 +144,7 @@
   <div class="sidebar">
     <div class="brand">COPEN</div>
     <div class="nav-item active" id="navChat">New chat</div>
-    <a class="nav-item" href="popup.html" style="text-decoration:none;">Popup AI</a>
+    <div class="nav-item" id="navPopup">Popup AI</div>
 
     <div class="more-toggle" id="moreToggle">
       <span class="more-chevron" id="moreChevron">›</span>
@@ -130,8 +170,21 @@
           <button class="complete-btn" id="completeBtn" disabled>완료</button>
         </div>
       </div>
-      <div class="messages" id="messages"></div>
-      <div class="composer">
+      <div class="landing" id="landing">
+        <p class="landing-title">오늘은 무엇을 도와드릴까요?</p>
+        <div class="landing-input-row">
+          <input type="text" id="landingInput" placeholder="무엇이든 물어보세요…" />
+          <button class="landing-send" id="landingSendBtn" title="보내기">↑</button>
+        </div>
+        <div class="chips">
+          <span class="chip" data-prompt="오늘 뭐 먹지?">오늘 뭐 먹지?</span>
+          <span class="chip" data-prompt="이 글 요약해줘">이 글 요약해줘</span>
+          <span class="chip" data-prompt="이거 사실이야?">이거 사실이야?</span>
+        </div>
+      </div>
+
+      <div class="messages" id="messages" style="display:none;"></div>
+      <div class="composer" id="composer" style="display:none;">
         <div class="input-row">
           <textarea id="textarea" placeholder="무엇이든 물어보세요…"></textarea>
           <button class="send" id="sendBtn" title="보내기">↑</button>
@@ -142,7 +195,19 @@
     <div class="missions-view" id="missionsView">
       <h1>미션</h1>
       <p class="sub">관심 있는 미션을 골라 AI와 직접 대화하며 완료해보세요.</p>
-      <div id="missionList"></div>
+      <div id="missionRecommend"></div>
+      <div class="all-missions-toggle" id="allMissionsToggle">전체 미션 보기 ›</div>
+      <div id="missionList" style="display:none;"></div>
+    </div>
+
+    <div class="popup-intro-view" id="popupIntroView">
+      <h1>Popup AI</h1>
+      <p class="sub">
+        화면 아무 곳이나 캡처(Win+Shift+S)해서 물어볼 수 있는 코딩 도우미예요.
+        버튼을 누르면 별도의 창으로 열려서, 이 창과 별개로 화면 어디로든 자유롭게 옮기거나
+        다른 프로그램 위에 띄워둘 수 있습니다.
+      </p>
+      <button class="start-btn" id="openPopupBtn">팝업으로 열기</button>
     </div>
   </div>
 </div>
@@ -155,8 +220,9 @@ const HISTORY_LIMIT = 10; // 배우기용 AI와 같은 자르기 규칙(server/a
 // ── 미션 설정 데이터 ──────────────────────────────────────────────────────
 // PROJECT.md "미션 구성" / 이 세션에서 정리한 판정 원칙:
 //   - AI는 미션 진행도를 모른다(4-1). 정규식/키워드로 "이건 수정 요청이다"류 의미 판정도 안 한다.
-//   - 완료 버튼은 구조적으로 셀 수 있는 것(대화 턴 수) minTurns 이상일 때만 활성화된다.
-//   - 그 외 체크리스트 항목은 전부 안내문이고, 최종 판단은 사용자가 직접 "완료"를 눌러서 한다.
+//   - 대화 턴 수 같은 대리 지표도 안 쓴다 — 아무 말이나 두 번 보내면 뚫리는 가짜 게이트였다.
+//   - 완료 버튼은 체크리스트 항목을 사용자가 전부 직접 체크했을 때만 활성화된다. 판단 주체는
+//     끝까지 사용자다. 시스템은 "몇 개를 체크했는지"만 센다 — 그것도 의미 판단은 아니다.
 //   - 미션이 늘어나도 이 배열에 항목만 추가하면 된다 — 판정 코드는 공유된다.
 const MISSIONS = [
   {
@@ -164,21 +230,18 @@ const MISSIONS = [
     title: "AI의 틀린 답 잡아내기",
     description: "AI 답변에서 의심되는 부분을 짚고, 출처나 재확인을 요청해보세요.",
     checklist: ["의심되는 부분 짚어보기", "출처나 재확인 요청하기"],
-    minTurns: 2,
   },
   {
     id: "plan-with-conditions",
     title: "내 조건에 맞는 메뉴·일정 만들기",
     description: "예산·시간·취향 같은 조건을 넣어서 나만의 계획을 받아보세요.",
     checklist: ["조건(예산·시간 등) 넣어 요청하기"],
-    minTurns: 1,
   },
   {
     id: "polish-message",
     title: "보내기 어려운 문장 다듬기",
     description: "실제 문자나 이메일 문장을 붙여넣고, 최소 한 번 수정을 요청해보세요.",
     checklist: ["원문 붙여넣기", "최소 한 번 수정 요청하기"],
-    minTurns: 2,
   },
 ];
 
@@ -188,12 +251,17 @@ const completedMissionIds = new Set();
 // ── 엘리먼트 ──────────────────────────────────────────────────────────────
 const navChat = document.getElementById("navChat");
 const navMissions = document.getElementById("navMissions");
+const navPopup = document.getElementById("navPopup");
 const moreToggle = document.getElementById("moreToggle");
 const moreItems = document.getElementById("moreItems");
 const moreChevron = document.getElementById("moreChevron");
 const chatView = document.getElementById("chatView");
 const missionsView = document.getElementById("missionsView");
 const missionListEl = document.getElementById("missionList");
+const missionRecommendEl = document.getElementById("missionRecommend");
+const allMissionsToggle = document.getElementById("allMissionsToggle");
+const popupIntroView = document.getElementById("popupIntroView");
+const openPopupBtn = document.getElementById("openPopupBtn");
 
 const missionBanner = document.getElementById("missionBanner");
 const missionTitleEl = document.getElementById("missionTitle");
@@ -201,25 +269,43 @@ const missionChecklistEl = document.getElementById("missionChecklist");
 const missionHintEl = document.getElementById("missionHint");
 const completeBtn = document.getElementById("completeBtn");
 
+const landingEl = document.getElementById("landing");
+const landingInput = document.getElementById("landingInput");
+const landingSendBtn = document.getElementById("landingSendBtn");
 const messagesEl = document.getElementById("messages");
+const composerEl = document.getElementById("composer");
 const textarea = document.getElementById("textarea");
 const sendBtn = document.getElementById("sendBtn");
 
 let history = [];
 let activeMission = null; // MISSIONS 항목 중 하나 또는 null
-let userTurnCount = 0;
+let missionChecked = [];  // activeMission.checklist와 같은 길이의 boolean 배열
 
 // ── 뷰 전환 ──────────────────────────────────────────────────────────────
+// 세 뷰(채팅/미션/팝업 AI 안내)는 항상 하나만 보인다.
+function setActiveNav(active) {
+  navChat.classList.toggle("active", active === "chat");
+  navMissions.classList.toggle("active", active === "missions");
+  navPopup.classList.toggle("active", active === "popup");
+}
 function showChatView() {
   chatView.style.display = "flex";
   missionsView.classList.remove("active");
-  navChat.classList.add("active");
+  popupIntroView.classList.remove("active");
+  setActiveNav("chat");
 }
 function showMissionsView() {
   chatView.style.display = "none";
   missionsView.classList.add("active");
-  navChat.classList.remove("active");
+  popupIntroView.classList.remove("active");
+  setActiveNav("missions");
   renderMissionList();
+}
+function showPopupIntroView() {
+  chatView.style.display = "none";
+  missionsView.classList.remove("active");
+  popupIntroView.classList.add("active");
+  setActiveNav("popup");
 }
 navChat.addEventListener("click", () => { startNewChat(); showChatView(); });
 navMissions.addEventListener("click", showMissionsView);
@@ -229,41 +315,95 @@ moreToggle.addEventListener("click", () => {
   moreChevron.style.transform = open ? "rotate(90deg)" : "rotate(0deg)";
 });
 
+// ── 팝업 AI: 클릭하면 바로 뜨지 않는다. 먼저 안내 화면으로 들어가고,
+//    거기서 버튼을 눌러야 popup.html이 진짜 별도 브라우저 창으로 열린다.
+//    (일반 iframe/오버레이는 이 페이지 안에 갇혀서 화면 밖으로 못 나간다 —
+//     OS가 관리하는 진짜 창이어야 자유롭게 옮길 수 있다.)
+navPopup.addEventListener("click", showPopupIntroView);
+openPopupBtn.addEventListener("click", () => {
+  window.open("popup.html", "copen-popup-ai", "width=400,height=640,resizable=yes");
+});
+
 // ── 미션 목록 ────────────────────────────────────────────────────────────
-function renderMissionList() {
-  missionListEl.innerHTML = "";
-  for (const mission of MISSIONS) {
-    const card = document.createElement("div");
-    card.className = "mission-card";
-    const done = completedMissionIds.has(mission.id);
-    card.innerHTML = `
-      <div>
-        <p class="title">${mission.title}</p>
-        <p class="desc">${mission.description}</p>
+// 허브 구조의 축소판: 미션이 3개뿐이라 카테고리별로 나누는 대신,
+// "추천 미션 하나를 먼저 보여주고, 원하면 전체를 보게" 하는 것으로 선택지를 한 번에 다 안 보여준다.
+// 미션이 늘어나면 이 자리에 카테고리 그룹핑을 다시 붙이면 된다(CURRICULUM.md 2부 참고).
+function buildMissionCard(mission) {
+  const card = document.createElement("div");
+  card.className = "mission-card";
+  const done = completedMissionIds.has(mission.id);
+  card.innerHTML = `
+    <div>
+      <p class="title">${mission.title}</p>
+      <p class="desc">${mission.description}</p>
+    </div>
+  `;
+  if (done) {
+    const badge = document.createElement("span");
+    badge.className = "done-badge";
+    badge.textContent = "완료됨";
+    card.appendChild(badge);
+  } else {
+    const btn = document.createElement("button");
+    btn.className = "start-btn";
+    btn.textContent = "시작";
+    btn.addEventListener("click", () => startMission(mission));
+    card.appendChild(btn);
+  }
+  return card;
+}
+
+function renderRecommendedMission() {
+  missionRecommendEl.innerHTML = "";
+  const next = MISSIONS.find((m) => !completedMissionIds.has(m.id));
+  if (!next) {
+    missionRecommendEl.innerHTML = `
+      <div class="recommend-card">
+        <p class="tag">축하해요</p>
+        <p class="title">v1 미션을 모두 완료했어요</p>
       </div>
     `;
-    if (done) {
-      const badge = document.createElement("span");
-      badge.className = "done-badge";
-      badge.textContent = "완료됨";
-      card.appendChild(badge);
-    } else {
-      const btn = document.createElement("button");
-      btn.className = "start-btn";
-      btn.textContent = "시작";
-      btn.addEventListener("click", () => startMission(mission));
-      card.appendChild(btn);
-    }
-    missionListEl.appendChild(card);
+    return;
+  }
+  const card = document.createElement("div");
+  card.className = "recommend-card";
+  card.innerHTML = `
+    <p class="tag">추천 미션</p>
+    <p class="title">${next.title}</p>
+    <p class="desc">${next.description}</p>
+  `;
+  const btn = document.createElement("button");
+  btn.className = "start-btn";
+  btn.textContent = "시작";
+  btn.addEventListener("click", () => startMission(next));
+  card.appendChild(btn);
+  missionRecommendEl.appendChild(card);
+}
+
+function renderMissionList() {
+  renderRecommendedMission();
+  missionListEl.style.display = "none";
+  allMissionsToggle.textContent = "전체 미션 보기 ›";
+  missionListEl.innerHTML = "";
+  for (const mission of MISSIONS) {
+    missionListEl.appendChild(buildMissionCard(mission));
   }
 }
+
+allMissionsToggle.addEventListener("click", () => {
+  const opening = missionListEl.style.display === "none";
+  missionListEl.style.display = opening ? "block" : "none";
+  allMissionsToggle.textContent = opening ? "전체 미션 접기 ‹" : "전체 미션 보기 ›";
+});
 
 // ── 미션 진행 ────────────────────────────────────────────────────────────
 function startMission(mission) {
   startNewChat(); // activeMission을 null로 되돌리므로, 미션 지정은 반드시 이 다음에 한다
   activeMission = mission;
+  missionChecked = mission.checklist.map(() => false);
   renderMissionBanner();
   addSystemMessage(`"${mission.title}" 미션을 시작했어요. 평소처럼 AI와 대화하면서 진행해보세요.`);
+  hideLanding(); // 미션은 목표가 이미 있으므로 "무엇을 도와드릴까요" 랜딩을 안 보여준다
   showChatView();
 }
 
@@ -274,17 +414,33 @@ function renderMissionBanner() {
   }
   missionBanner.classList.add("active");
   missionTitleEl.textContent = activeMission.title;
-  missionChecklistEl.innerHTML = activeMission.checklist.map((item) => `<div>· ${item}</div>`).join("");
+  missionChecklistEl.innerHTML = "";
+  activeMission.checklist.forEach((item, i) => {
+    const label = document.createElement("label");
+    label.className = "check-item";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = missionChecked[i];
+    cb.addEventListener("change", () => {
+      missionChecked[i] = cb.checked;
+      updateCompleteGate();
+    });
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(item));
+    missionChecklistEl.appendChild(label);
+  });
   updateCompleteGate();
 }
 
+// 판정은 여기서도 "체크박스 몇 개가 켜졌는지"만 본다. 항목이 실제로 잘 됐는지는
+// 시스템이 알 방법이 없고, 그건 사용자가 체크할 때 스스로 판단한 것이다.
 function updateCompleteGate() {
   if (!activeMission) return;
-  const ready = userTurnCount >= activeMission.minTurns;
-  completeBtn.disabled = !ready;
-  missionHintEl.textContent = ready
-    ? "충분히 진행했어요. 결과에 만족하면 완료를 눌러주세요."
-    : `대화를 조금 더 나눠보세요 (${userTurnCount}/${activeMission.minTurns})`;
+  const allChecked = missionChecked.every(Boolean);
+  completeBtn.disabled = !allChecked;
+  missionHintEl.textContent = allChecked
+    ? "모두 확인했어요. 완료를 눌러주세요."
+    : "위 항목을 직접 해보고 하나씩 체크해주세요.";
 }
 
 completeBtn.addEventListener("click", () => {
@@ -295,14 +451,25 @@ completeBtn.addEventListener("click", () => {
   renderMissionBanner();
 });
 
-// ── 채팅 ────────────────────────────────────────────────────────────────
+// ── 채팅 / 랜딩 ────────────────────────────────────────────────────────────
+function showLanding() {
+  landingEl.classList.remove("hidden");
+  messagesEl.style.display = "none";
+  composerEl.style.display = "none";
+}
+function hideLanding() {
+  landingEl.classList.add("hidden");
+  messagesEl.style.display = "flex";
+  composerEl.style.display = "block";
+}
+
 function startNewChat() {
   history = [];
-  userTurnCount = 0;
   activeMission = null;
+  missionChecked = [];
   messagesEl.innerHTML = "";
   renderMissionBanner();
-  addAiMessage("안녕하세요! 무엇이 궁금하신가요?");
+  showLanding(); // ChatGPT처럼 빈 대화는 안내 메시지 대신 가운데 입력창으로 시작한다
 }
 
 function pushHistory(role, content) {
@@ -355,15 +522,15 @@ function sendToAI(messages) {
   });
 }
 
-async function handleSend() {
-  const text = textarea.value.trim();
+async function handleSend(rawText) {
+  const text = (rawText ?? textarea.value).trim();
   if (!text) return;
 
+  if (!landingEl.classList.contains("hidden")) hideLanding(); // 첫 메시지를 보내는 순간 랜딩을 접는다
   addUserMessage(text);
   pushHistory("user", text);
-  userTurnCount += 1;
-  updateCompleteGate();
   textarea.value = "";
+  landingInput.value = "";
 
   const done = showLoading();
   let replyText;
@@ -373,8 +540,6 @@ async function handleSend() {
     done();
     addAiMessage("오류: " + err.message);
     history.pop();
-    userTurnCount -= 1;
-    updateCompleteGate();
     return;
   }
   done();
@@ -382,12 +547,23 @@ async function handleSend() {
   pushHistory("assistant", replyText);
 }
 
-sendBtn.addEventListener("click", handleSend);
+sendBtn.addEventListener("click", () => handleSend());
 textarea.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     handleSend();
   }
+});
+
+landingSendBtn.addEventListener("click", () => handleSend(landingInput.value));
+landingInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    handleSend(landingInput.value);
+  }
+});
+document.querySelectorAll(".chip").forEach((chip) => {
+  chip.addEventListener("click", () => handleSend(chip.dataset.prompt));
 });
 
 startNewChat();

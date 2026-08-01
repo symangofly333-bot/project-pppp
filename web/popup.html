@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="UTF-8" />
-<title>COPEN — Popup AI</title>
+<title>COPEN — 팝업 AI</title>
 <style>
   :root { --gold-50:#FAEEDA; --gold-200:#EF9F27; --gold-800:#633806; --gold-900:#412402; }
   * { box-sizing: border-box; font-family: -apple-system, "Segoe UI", sans-serif; }
@@ -54,8 +54,8 @@
 <body>
 <div class="app">
   <div class="header">
-    <span class="title">Popup AI</span>
-    <span class="sub">— coding helper</span>
+    <span class="title">팝업 AI</span>
+    <span class="sub">— 코딩 도우미</span>
   </div>
 
   <div class="messages" id="messages"></div>
@@ -63,14 +63,14 @@
   <div class="composer">
     <div class="pending-image" id="pendingImage">
       <img id="pendingImagePreview" alt="" />
-      <span>Screenshot attached</span>
-      <span class="remove" id="removeImage">Remove</span>
+      <span>스크린샷 첨부됨</span>
+      <span class="remove" id="removeImage">제거</span>
     </div>
     <div class="input-row">
-      <textarea id="textarea" placeholder="Paste a screenshot (Ctrl+V) or ask a coding question…"></textarea>
-      <button class="send" id="sendBtn" title="Send">↑</button>
+      <textarea id="textarea" placeholder="스크린샷을 붙여넣거나(Ctrl+V) 코딩 질문을 입력하세요…"></textarea>
+      <button class="send" id="sendBtn" title="보내기">↑</button>
     </div>
-    <div class="hint">Tip: Win+Shift+S (or Cmd+Shift+4 on Mac) to snip any part of your screen, then paste it here.</div>
+    <div class="hint">팁: Win+Shift+S(Mac은 Cmd+Shift+4)로 화면 아무 곳이나 캡처한 뒤 여기에 붙여넣으세요.</div>
   </div>
 </div>
 
@@ -166,7 +166,7 @@ function sendToAI(messages) {
   })
     .then(async (res) => {
       const body = await res.json();
-      if (!res.ok) throw new Error(body.message || body.error || "Request failed");
+      if (!res.ok) throw new Error(body.message || body.error || "요청이 실패했습니다.");
       return body.text;
     });
 }
@@ -199,7 +199,7 @@ async function handleSend() {
     replyText = await sendToAI(history);
   } catch (err) {
     done();
-    addTextMessage("ai", "Error: " + err.message);
+    addTextMessage("ai", "오류: " + err.message);
     history.pop(); // 실패한 메시지가 다음 요청에도 계속 끼면 안 되니 되돌린다
     return;
   }
@@ -216,7 +216,7 @@ textarea.addEventListener("keydown", (e) => {
   }
 });
 
-addTextMessage("ai", "Hi! Paste a screenshot of your code or error, or just ask a coding question.");
+addTextMessage("ai", "안녕하세요! 코드나 오류 스크린샷을 붙여넣거나, 코딩 질문을 편하게 물어보세요.");
 </script>
 </body>
 </html>
