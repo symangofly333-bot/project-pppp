@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>COPEN — Popup AI</title>
+<style>
+  :root { --gold-50:#FAEEDA; --gold-200:#EF9F27; --gold-800:#633806; --gold-900:#412402; }
+  * { box-sizing: border-box; font-family: -apple-system, "Segoe UI", sans-serif; }
+  body { margin: 0; background: #fff; color: #1a1a1a; }
+
+  .app { max-width: 720px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; }
+
+  .header {
+    padding: 14px 20px; border-bottom: 0.5px solid #e5e5e5;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .header .title { font-weight: 500; font-size: 15px; }
+  .header .sub { font-size: 12px; color: #888; }
+
+  .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 80%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--gold-50); color: var(--gold-900); border-bottom-right-radius: 3px; }
+  .msg.ai   { align-self: flex-start; background: #f5f5f5; color: #1a1a1a; border-bottom-left-radius: 3px; }
+  .msg img { max-width: 100%; border-radius: 8px; display: block; margin-bottom: 6px; }
+
+  .composer { border-top: 0.5px solid #e5e5e5; padding: 12px 16px; }
+  .pending-image {
+    display: none; align-items: center; gap: 8px; margin-bottom: 8px;
+    background: #f5f5f5; border-radius: 8px; padding: 6px 8px;
+  }
+  .pending-image img { height: 40px; border-radius: 4px; }
+  .pending-image .remove { margin-left: auto; cursor: pointer; color: #888; font-size: 13px; }
+
+  .input-row { display: flex; gap: 8px; align-items: flex-end; }
+  textarea {
+    flex: 1; resize: none; height: 42px; max-height: 140px;
+    padding: 10px 12px; border: 0.5px solid #d8d8d8; border-radius: 10px;
+    font-size: 14px; outline: none;
+  }
+  textarea:focus { border-color: var(--gold-200); }
+  .send {
+    flex: 0 0 auto; width: 42px; height: 42px; border: none; border-radius: 50%;
+    background: var(--gold-200); color: var(--gold-900); font-size: 16px; cursor: pointer;
+  }
+  .send:hover { opacity: 0.9; }
+  .hint { font-size: 11px; color: #999; margin-top: 6px; }
+
+  .loading span { display: inline-block; width: 6px; height: 6px; margin: 0 2px; border-radius: 50%; background: #999; animation: blink 1.2s infinite both; }
+  .loading span:nth-child(2) { animation-delay: .2s; }
+  .loading span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <span class="title">Popup AI</span>
+    <span class="sub">— coding helper</span>
+  </div>
+
+  <div class="messages" id="messages"></div>
+
+  <div class="composer">
+    <div class="pending-image" id="pendingImage">
+      <img id="pendingImagePreview" alt="" />
+      <span>Screenshot attached</span>
+      <span class="remove" id="removeImage">Remove</span>
+    </div>
+    <div class="input-row">
+      <textarea id="textarea" placeholder="Paste a screenshot (Ctrl+V) or ask a coding question…"></textarea>
+      <button class="send" id="sendBtn" title="Send">↑</button>
+    </div>
+    <div class="hint">Tip: Win+Shift+S (or Cmd+Shift+4 on Mac) to snip any part of your screen, then paste it here.</div>
+  </div>
+</div>
+
+<script>
+// 중계 서버(server/index.js)에 직접 붙는다. API 키는 여기에 없다 — 서버에만 있다.
+const RELAY_URL = "http://localhost:8787/ask";
+const HISTORY_LIMIT = 10; // PROJECT.md의 배우기용 AI와 같은 자르기 규칙을 재사용
+
+const messagesEl = document.getElementById("messages");
+const textarea = document.getElementById("textarea");
+const sendBtn = document.getElementById("sendBtn");
+const pendingImageEl = document.getElementById("pendingImage");
+const pendingImagePreview = document.getElementById("pendingImagePreview");
+const removeImageBtn = document.getElementById("removeImage");
+
+const history = [];
+let pendingImage = null; // { mediaType, data } — data는 base64 (data: 접두어 제거됨)
+
+function pushHistory(role, content) {
+  history.push({ role, content });
+  if (history.length > HISTORY_LIMIT) {
+    const overflow = history.length - HISTORY_LIMIT;
+    history.splice(0, overflow + (overflow % 2));
+  }
+}
+
+function addTextMessage(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function addUserMessageWithImage(dataUrl, text) {
+  const div = document.createElement("div");
+  div.className = "msg user";
+  const img = document.createElement("img");
+  img.src = dataUrl;
+  div.appendChild(img);
+  if (text) {
+    const p = document.createElement("div");
+    p.textContent = text;
+    div.appendChild(p);
+  }
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function showLoading() {
+  const div = document.createElement("div");
+  div.className = "msg ai loading";
+  div.innerHTML = "<span></span><span></span><span></span>";
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return () => div.remove();
+}
+
+// 클립보드에 이미지가 있으면(OS 스니핑 도구로 캡처 후) 붙여넣기 이벤트로 받는다.
+// PROJECT.md "팝업 AI — 올가미 기능 명세" 참고: 화면 드래그 선택 자체는 OS가 하고,
+// 여기서는 그 결과(클립보드 이미지)를 받기만 하면 된다.
+textarea.addEventListener("paste", (e) => {
+  const items = e.clipboardData?.items || [];
+  for (const item of items) {
+    if (item.type.startsWith("image/")) {
+      const file = item.getAsFile();
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        const [, mediaType, base64] = dataUrl.match(/^data:(.+?);base64,(.+)$/) || [];
+        if (!mediaType || !base64) return;
+        pendingImage = { mediaType, data: base64, dataUrl };
+        pendingImagePreview.src = dataUrl;
+        pendingImageEl.style.display = "flex";
+      };
+      reader.readAsDataURL(file);
+      e.preventDefault();
+      return;
+    }
+  }
+});
+
+removeImageBtn.addEventListener("click", () => {
+  pendingImage = null;
+  pendingImageEl.style.display = "none";
+});
+
+function sendToAI(messages) {
+  return fetch(RELAY_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ persona: "coding", messages }),
+  })
+    .then(async (res) => {
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.message || body.error || "Request failed");
+      return body.text;
+    });
+}
+
+async function handleSend() {
+  const text = textarea.value.trim();
+  if (!text && !pendingImage) return;
+
+  let content;
+  if (pendingImage) {
+    content = [
+      { type: "image", source: { type: "base64", media_type: pendingImage.mediaType, data: pendingImage.data } },
+    ];
+    if (text) content.push({ type: "text", text });
+    addUserMessageWithImage(pendingImage.dataUrl, text);
+  } else {
+    content = text;
+    addTextMessage("user", text);
+  }
+  pushHistory("user", content);
+
+  textarea.value = "";
+  const hadImage = !!pendingImage;
+  pendingImage = null;
+  pendingImageEl.style.display = "none";
+
+  const done = showLoading();
+  let replyText;
+  try {
+    replyText = await sendToAI(history);
+  } catch (err) {
+    done();
+    addTextMessage("ai", "Error: " + err.message);
+    history.pop(); // 실패한 메시지가 다음 요청에도 계속 끼면 안 되니 되돌린다
+    return;
+  }
+  done();
+  addTextMessage("ai", replyText);
+  pushHistory("assistant", replyText);
+}
+
+sendBtn.addEventListener("click", handleSend);
+textarea.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    handleSend();
+  }
+});
+
+addTextMessage("ai", "Hi! Paste a screenshot of your code or error, or just ask a coding question.");
+</script>
+</body>
+</html>

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>COPEN — Sidebar mockup (reference, not wired to anything)</title>
+<style>
+  :root { --border:#e5e5e5; --surface-1:#fafafa; --surface-2:#ffffff; --text-secondary:#666; --text-muted:#999; --radius:8px; }
+  * { box-sizing: border-box; font-family: -apple-system, "Segoe UI", sans-serif; }
+  body { margin: 20px; background: #fff; }
+</style>
+</head>
+<body>
+
+<div style="display:flex;min-height:560px;border:0.5px solid var(--border);border-radius:12px;overflow:hidden;font-size:14px;background:var(--surface-2);">
+
+  <div style="width:240px;flex:0 0 240px;background:var(--surface-2);border-right:0.5px solid var(--border);display:flex;flex-direction:column;padding:12px 8px;">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px 14px;">
+      <span style="font-weight:500;font-size:16px;">COPEN</span>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:2px;">
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--radius);background:#FAEEDA;">
+        <span style="color:#412402;">New chat</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--radius);">
+        <span>Popup AI</span>
+      </div>
+    </div>
+
+    <div style="margin-top:4px;">
+      <div id="moreToggle" style="display:flex;align-items:center;gap:6px;padding:8px 10px;color:var(--text-secondary);cursor:pointer;">
+        <span id="moreChevron" style="display:inline-block;transition:transform .15s;">›</span>
+        <span>More</span>
+      </div>
+      <div id="moreItems" style="display:none;flex-direction:column;gap:2px;padding-left:6px;">
+        <div style="padding:8px 10px;border-radius:var(--radius);">Missions</div>
+        <div style="padding:8px 10px;border-radius:var(--radius);">Find AI tools</div>
+        <div style="padding:8px 10px;border-radius:var(--radius);">Shop</div>
+      </div>
+    </div>
+
+    <div style="height:0.5px;background:var(--border);margin:12px 4px;"></div>
+
+    <div style="padding:4px 10px 8px;color:var(--text-muted);font-size:12px;">Recent</div>
+    <div style="display:flex;flex-direction:column;gap:1px;overflow:hidden;">
+      <div style="padding:7px 10px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">How do I use AI?</div>
+      <div style="padding:7px 10px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Writing good prompts</div>
+      <div style="padding:7px 10px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Image AI recommendations</div>
+    </div>
+
+    <div style="flex:1;"></div>
+
+    <div style="height:0.5px;background:var(--border);margin:8px 4px;"></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;">
+      <div style="width:24px;height:24px;border-radius:50%;background:#FAEEDA;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:#633806;">U</div>
+      <span>Profile</span>
+    </div>
+  </div>
+
+  <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2rem;">
+    <p style="font-size:22px;font-weight:500;margin:0 0 1.5rem;">What can I help you with today?</p>
+    <div style="width:100%;max-width:520px;display:flex;align-items:center;gap:8px;border:0.5px solid var(--border);border-radius:24px;padding:6px 8px 6px 18px;background:var(--surface-1);">
+      <span style="flex:1;color:var(--text-muted);font-size:14px;">Ask anything</span>
+      <div style="width:32px;height:32px;border-radius:50%;background:#EF9F27;display:flex;align-items:center;justify-content:center;color:#412402;">↑</div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <span style="font-size:12px;color:var(--text-secondary);border:0.5px solid var(--border);border-radius:16px;padding:5px 12px;">What should I eat?</span>
+      <span style="font-size:12px;color:var(--text-secondary);border:0.5px solid var(--border);border-radius:16px;padding:5px 12px;">Summarize this text</span>
+      <span style="font-size:12px;color:var(--text-secondary);border:0.5px solid var(--border);border-radius:16px;padding:5px 12px;">Is this true?</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const t = document.getElementById('moreToggle');
+const items = document.getElementById('moreItems');
+const chev = document.getElementById('moreChevron');
+t.addEventListener('click', () => {
+  const open = items.style.display === 'flex';
+  items.style.display = open ? 'none' : 'flex';
+  chev.style.transform = open ? 'rotate(90deg)' : 'rotate(0deg)';
+});
+</script>
+</body>
+</html>

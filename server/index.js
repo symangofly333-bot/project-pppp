@@ -8,7 +8,11 @@
 // 실행: ANTHROPIC_API_KEY를 환경변수로 설정한 뒤 `npm start` (기본 포트 8787).
 
 const http = require("node:http");
-const { askLearningAI } = require("./ask-claude");
+const { askAI } = require("./ask-claude");
+
+// base64 이미지 하나가 감당할 수 있는 최대 크기. Claude API 요청 본문 한도(32MB)보다
+// 훨씬 낮게 잡아서, 스니핑 도구로 화면 전체를 캡처해 붙여넣는 실수 정도는 걸러낸다.
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 const PORT = Number.parseInt(process.env.PORT || "8787", 10);
 
@@ -31,8 +35,36 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-// 외부(확장 프로그램)에서 오는 입력이라 느슨하게 두면 안 된다.
+// content 하나(텍스트 또는 올가미 이미지 블록)를 검사한다. 이미지는 팝업 AI의
+// 붙여넣기 경로에서만 오는데, 여기선 어느 persona인지 안 가리고 둘 다 허용해둔다 —
+// 배우기용 채팅에 실수로 이미지가 섞여도 굳이 막을 이유가 없다.
+function validateContentBlock(block, path) {
+  if (!block || typeof block !== "object" || typeof block.type !== "string") {
+    return `${path} must be an object with a "type"`;
+  }
+  if (block.type === "text") {
+    if (typeof block.text !== "string" || block.text.trim() === "") {
+      return `${path}.text must be a non-empty string`;
+    }
+    return null;
+  }
+  if (block.type === "image") {
+    const src = block.source;
+    if (!src || src.type !== "base64" || typeof src.media_type !== "string" || typeof src.data !== "string") {
+      return `${path}.source must be {type: "base64", media_type, data}`;
+    }
+    if (src.data.length > MAX_IMAGE_BYTES) {
+      return `${path}.source.data exceeds the ${MAX_IMAGE_BYTES}-byte limit`;
+    }
+    return null;
+  }
+  return `${path}.type must be "text" or "image"`;
+}
+
+// 외부(확장 프로그램/웹)에서 오는 입력이라 느슨하게 두면 안 된다.
 // Claude API 자체 요구사항: 첫 메시지는 user, role은 번갈아 나와야 한다.
+// content는 문자열(기존 배우기용 채팅)이거나, 팝업 AI의 올가미 붙여넣기가 만드는
+// 콘텐츠 블록 배열(텍스트+이미지 섞임)일 수 있다.
 function validateMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) {
     return "messages must be a non-empty array";
@@ -41,8 +73,16 @@ function validateMessages(messages) {
     if (!m || (m.role !== "user" && m.role !== "assistant")) {
       return `messages[${i}].role must be "user" or "assistant"`;
     }
-    if (typeof m.content !== "string" || m.content.trim() === "") {
-      return `messages[${i}].content must be a non-empty string`;
+    if (typeof m.content === "string") {
+      if (m.content.trim() === "") return `messages[${i}].content must be a non-empty string`;
+    } else if (Array.isArray(m.content)) {
+      if (m.content.length === 0) return `messages[${i}].content must be a non-empty array`;
+      for (const [j, block] of m.content.entries()) {
+        const err = validateContentBlock(block, `messages[${i}].content[${j}]`);
+        if (err) return err;
+      }
+    } else {
+      return `messages[${i}].content must be a string or an array of content blocks`;
     }
   }
   if (messages[0].role !== "user") {
@@ -80,6 +120,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const persona = payload?.persona === "coding" ? "coding" : "learning";
+
   const validationError = validateMessages(payload?.messages);
   if (validationError) {
     sendJson(res, 400, { error: validationError });
@@ -87,7 +129,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
-    const result = await askLearningAI(payload.messages);
+    const result = await askAI(persona, payload.messages);
     sendJson(res, 200, { text: result.text });
   } catch (error) {
     console.error(`[${new Date().toISOString()}] ${error.category || "error"}: ${error.message}`);
