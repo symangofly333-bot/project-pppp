@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>COPEN</title>
+<style>
+  :root {
+    --gold-50:#FAEEDA; --gold-200:#EF9F27; --gold-800:#633806; --gold-900:#412402;
+    --border:#e5e5e5; --surface-1:#fafafa; --surface-2:#ffffff;
+    --text-secondary:#666; --text-muted:#999; --radius:8px;
+  }
+  * { box-sizing: border-box; font-family: -apple-system, "Segoe UI", sans-serif; }
+  body { margin: 0; background: #fff; color: #1a1a1a; height: 100vh; overflow: hidden; }
+
+  .shell { display: flex; height: 100vh; }
+
+  /* ── 사이드바 (web/mockup-sidebar.html 그대로) ── */
+  .sidebar {
+    width: 240px; flex: 0 0 240px; background: var(--surface-2);
+    border-right: 0.5px solid var(--border);
+    display: flex; flex-direction: column; padding: 12px 8px;
+  }
+  .brand { display:flex; align-items:center; padding:6px 8px 14px; font-weight:500; font-size:16px; }
+  .nav-item {
+    display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:var(--radius);
+    cursor:pointer; color:#1a1a1a;
+  }
+  .nav-item:hover { background: #f5f5f5; }
+  .nav-item.active { background: var(--gold-50); color: var(--gold-900); }
+  .more-toggle { display:flex; align-items:center; gap:6px; padding:8px 10px; color:var(--text-secondary); cursor:pointer; margin-top:4px; }
+  .more-chevron { display:inline-block; transition: transform .15s; }
+  .more-items { display:none; flex-direction:column; gap:2px; padding-left:6px; }
+  .sidebar-spacer { flex: 1; }
+
+  /* ── 메인 영역 ── */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  /* 채팅 뷰 */
+  .chat-view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .mission-banner {
+    display: none; flex-direction: column; gap: 6px;
+    background: var(--gold-50); border-bottom: 0.5px solid var(--border);
+    padding: 12px 20px;
+  }
+  .mission-banner.active { display: flex; }
+  .mission-banner .label { font-size: 11px; color: var(--gold-800); font-weight: 600; letter-spacing: .03em; }
+  .mission-banner .title { font-size: 14px; font-weight: 600; color: var(--gold-900); }
+  .mission-banner .checklist { font-size: 13px; color: var(--gold-800); }
+  .mission-banner .checklist div { padding: 2px 0; }
+  .mission-banner .row { display:flex; align-items:center; justify-content: space-between; gap: 12px; margin-top: 4px; }
+  .mission-banner .hint { font-size: 12px; color: var(--gold-800); opacity: .8; }
+  .complete-btn {
+    border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600;
+    background: var(--gold-200); color: var(--gold-900); cursor: pointer;
+  }
+  .complete-btn:disabled { background: #e5d9c3; color: #9c8a6a; cursor: not-allowed; }
+
+  .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 70%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--gold-50); color: var(--gold-900); border-bottom-right-radius: 3px; }
+  .msg.ai   { align-self: flex-start; background: #f5f5f5; color: #1a1a1a; border-bottom-left-radius: 3px; }
+  .msg.system { align-self: center; background: transparent; color: var(--text-muted); font-size: 12px; }
+
+  .composer { border-top: 0.5px solid var(--border); padding: 12px 16px; }
+  .input-row { display: flex; gap: 8px; align-items: flex-end; }
+  textarea {
+    flex: 1; resize: none; height: 42px; max-height: 140px;
+    padding: 10px 12px; border: 0.5px solid #d8d8d8; border-radius: 10px;
+    font-size: 14px; outline: none;
+  }
+  textarea:focus { border-color: var(--gold-200); }
+  .send {
+    flex: 0 0 auto; width: 42px; height: 42px; border: none; border-radius: 50%;
+    background: var(--gold-200); color: var(--gold-900); font-size: 16px; cursor: pointer;
+  }
+  .send:hover { opacity: 0.9; }
+
+  .loading span { display: inline-block; width: 6px; height: 6px; margin: 0 2px; border-radius: 50%; background: #999; animation: blink 1.2s infinite both; }
+  .loading span:nth-child(2) { animation-delay: .2s; }
+  .loading span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+
+  /* 미션 목록 뷰 */
+  .missions-view { flex: 1; overflow-y: auto; padding: 32px 40px; display: none; }
+  .missions-view.active { display: block; }
+  .missions-view h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .missions-view .sub { font-size: 13px; color: var(--text-secondary); margin: 0 0 24px; }
+  .mission-card {
+    border: 0.5px solid var(--border); border-radius: 12px; padding: 16px 18px;
+    margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .mission-card .title { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+  .mission-card .desc { font-size: 13px; color: var(--text-secondary); margin: 0; }
+  .mission-card .start-btn {
+    flex: 0 0 auto; border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600;
+    background: var(--gold-200); color: var(--gold-900); cursor: pointer;
+  }
+  .mission-card .done-badge { flex: 0 0 auto; font-size: 12px; color: var(--gold-800); background: var(--gold-50); padding: 6px 12px; border-radius: 16px; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <div class="sidebar">
+    <div class="brand">COPEN</div>
+    <div class="nav-item active" id="navChat">New chat</div>
+    <a class="nav-item" href="popup.html" style="text-decoration:none;">Popup AI</a>
+
+    <div class="more-toggle" id="moreToggle">
+      <span class="more-chevron" id="moreChevron">›</span>
+      <span>More</span>
+    </div>
+    <div class="more-items" id="moreItems">
+      <div class="nav-item" id="navMissions">Missions</div>
+      <div class="nav-item" style="color:var(--text-muted);cursor:default;">Find AI tools</div>
+      <div class="nav-item" style="color:var(--text-muted);cursor:default;">Shop</div>
+    </div>
+
+    <div class="sidebar-spacer"></div>
+  </div>
+
+  <div class="main">
+    <div class="chat-view" id="chatView">
+      <div class="mission-banner" id="missionBanner">
+        <span class="label">진행 중</span>
+        <span class="title" id="missionTitle"></span>
+        <div class="checklist" id="missionChecklist"></div>
+        <div class="row">
+          <span class="hint" id="missionHint"></span>
+          <button class="complete-btn" id="completeBtn" disabled>완료</button>
+        </div>
+      </div>
+      <div class="messages" id="messages"></div>
+      <div class="composer">
+        <div class="input-row">
+          <textarea id="textarea" placeholder="무엇이든 물어보세요…"></textarea>
+          <button class="send" id="sendBtn" title="보내기">↑</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="missions-view" id="missionsView">
+      <h1>미션</h1>
+      <p class="sub">관심 있는 미션을 골라 AI와 직접 대화하며 완료해보세요.</p>
+      <div id="missionList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// 중계 서버(server/index.js)에 직접 붙는다. API 키는 여기에 없다 — 서버에만 있다.
+const RELAY_URL = "http://localhost:8787/ask";
+const HISTORY_LIMIT = 10; // 배우기용 AI와 같은 자르기 규칙(server/ask-claude.js 대응)
+
+// ── 미션 설정 데이터 ──────────────────────────────────────────────────────
+// PROJECT.md "미션 구성" / 이 세션에서 정리한 판정 원칙:
+//   - AI는 미션 진행도를 모른다(4-1). 정규식/키워드로 "이건 수정 요청이다"류 의미 판정도 안 한다.
+//   - 완료 버튼은 구조적으로 셀 수 있는 것(대화 턴 수) minTurns 이상일 때만 활성화된다.
+//   - 그 외 체크리스트 항목은 전부 안내문이고, 최종 판단은 사용자가 직접 "완료"를 눌러서 한다.
+//   - 미션이 늘어나도 이 배열에 항목만 추가하면 된다 — 판정 코드는 공유된다.
+const MISSIONS = [
+  {
+    id: "catch-wrong-answer",
+    title: "AI의 틀린 답 잡아내기",
+    description: "AI 답변에서 의심되는 부분을 짚고, 출처나 재확인을 요청해보세요.",
+    checklist: ["의심되는 부분 짚어보기", "출처나 재확인 요청하기"],
+    minTurns: 2,
+  },
+  {
+    id: "plan-with-conditions",
+    title: "내 조건에 맞는 메뉴·일정 만들기",
+    description: "예산·시간·취향 같은 조건을 넣어서 나만의 계획을 받아보세요.",
+    checklist: ["조건(예산·시간 등) 넣어 요청하기"],
+    minTurns: 1,
+  },
+  {
+    id: "polish-message",
+    title: "보내기 어려운 문장 다듬기",
+    description: "실제 문자나 이메일 문장을 붙여넣고, 최소 한 번 수정을 요청해보세요.",
+    checklist: ["원문 붙여넣기", "최소 한 번 수정 요청하기"],
+    minTurns: 2,
+  },
+];
+
+// 세션 중에만 유지(새로고침하면 초기화) — 대화 기록과 같은 원칙(PROJECT.md, "저장소는 마지막 Phase만").
+const completedMissionIds = new Set();
+
+// ── 엘리먼트 ──────────────────────────────────────────────────────────────
+const navChat = document.getElementById("navChat");
+const navMissions = document.getElementById("navMissions");
+const moreToggle = document.getElementById("moreToggle");
+const moreItems = document.getElementById("moreItems");
+const moreChevron = document.getElementById("moreChevron");
+const chatView = document.getElementById("chatView");
+const missionsView = document.getElementById("missionsView");
+const missionListEl = document.getElementById("missionList");
+
+const missionBanner = document.getElementById("missionBanner");
+const missionTitleEl = document.getElementById("missionTitle");
+const missionChecklistEl = document.getElementById("missionChecklist");
+const missionHintEl = document.getElementById("missionHint");
+const completeBtn = document.getElementById("completeBtn");
+
+const messagesEl = document.getElementById("messages");
+const textarea = document.getElementById("textarea");
+const sendBtn = document.getElementById("sendBtn");
+
+let history = [];
+let activeMission = null; // MISSIONS 항목 중 하나 또는 null
+let userTurnCount = 0;
+
+// ── 뷰 전환 ──────────────────────────────────────────────────────────────
+function showChatView() {
+  chatView.style.display = "flex";
+  missionsView.classList.remove("active");
+  navChat.classList.add("active");
+}
+function showMissionsView() {
+  chatView.style.display = "none";
+  missionsView.classList.add("active");
+  navChat.classList.remove("active");
+  renderMissionList();
+}
+navChat.addEventListener("click", () => { startNewChat(); showChatView(); });
+navMissions.addEventListener("click", showMissionsView);
+moreToggle.addEventListener("click", () => {
+  const open = moreItems.style.display === "flex";
+  moreItems.style.display = open ? "none" : "flex";
+  moreChevron.style.transform = open ? "rotate(90deg)" : "rotate(0deg)";
+});
+
+// ── 미션 목록 ────────────────────────────────────────────────────────────
+function renderMissionList() {
+  missionListEl.innerHTML = "";
+  for (const mission of MISSIONS) {
+    const card = document.createElement("div");
+    card.className = "mission-card";
+    const done = completedMissionIds.has(mission.id);
+    card.innerHTML = `
+      <div>
+        <p class="title">${mission.title}</p>
+        <p class="desc">${mission.description}</p>
+      </div>
+    `;
+    if (done) {
+      const badge = document.createElement("span");
+      badge.className = "done-badge";
+      badge.textContent = "완료됨";
+      card.appendChild(badge);
+    } else {
+      const btn = document.createElement("button");
+      btn.className = "start-btn";
+      btn.textContent = "시작";
+      btn.addEventListener("click", () => startMission(mission));
+      card.appendChild(btn);
+    }
+    missionListEl.appendChild(card);
+  }
+}
+
+// ── 미션 진행 ────────────────────────────────────────────────────────────
+function startMission(mission) {
+  startNewChat(); // activeMission을 null로 되돌리므로, 미션 지정은 반드시 이 다음에 한다
+  activeMission = mission;
+  renderMissionBanner();
+  addSystemMessage(`"${mission.title}" 미션을 시작했어요. 평소처럼 AI와 대화하면서 진행해보세요.`);
+  showChatView();
+}
+
+function renderMissionBanner() {
+  if (!activeMission) {
+    missionBanner.classList.remove("active");
+    return;
+  }
+  missionBanner.classList.add("active");
+  missionTitleEl.textContent = activeMission.title;
+  missionChecklistEl.innerHTML = activeMission.checklist.map((item) => `<div>· ${item}</div>`).join("");
+  updateCompleteGate();
+}
+
+function updateCompleteGate() {
+  if (!activeMission) return;
+  const ready = userTurnCount >= activeMission.minTurns;
+  completeBtn.disabled = !ready;
+  missionHintEl.textContent = ready
+    ? "충분히 진행했어요. 결과에 만족하면 완료를 눌러주세요."
+    : `대화를 조금 더 나눠보세요 (${userTurnCount}/${activeMission.minTurns})`;
+}
+
+completeBtn.addEventListener("click", () => {
+  if (!activeMission || completeBtn.disabled) return;
+  completedMissionIds.add(activeMission.id);
+  addSystemMessage(`"${activeMission.title}" 미션을 완료했어요.`);
+  activeMission = null;
+  renderMissionBanner();
+});
+
+// ── 채팅 ────────────────────────────────────────────────────────────────
+function startNewChat() {
+  history = [];
+  userTurnCount = 0;
+  activeMission = null;
+  messagesEl.innerHTML = "";
+  renderMissionBanner();
+  addAiMessage("안녕하세요! 무엇이 궁금하신가요?");
+}
+
+function pushHistory(role, content) {
+  history.push({ role, content });
+  if (history.length > HISTORY_LIMIT) {
+    const overflow = history.length - HISTORY_LIMIT;
+    history.splice(0, overflow + (overflow % 2));
+  }
+}
+
+function addUserMessage(text) {
+  const div = document.createElement("div");
+  div.className = "msg user";
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+function addAiMessage(text) {
+  const div = document.createElement("div");
+  div.className = "msg ai";
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+function addSystemMessage(text) {
+  const div = document.createElement("div");
+  div.className = "msg system";
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+function showLoading() {
+  const div = document.createElement("div");
+  div.className = "msg ai loading";
+  div.innerHTML = "<span></span><span></span><span></span>";
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return () => div.remove();
+}
+
+function sendToAI(messages) {
+  return fetch(RELAY_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ persona: "learning", messages }),
+  }).then(async (res) => {
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.message || body.error || "요청이 실패했습니다.");
+    return body.text;
+  });
+}
+
+async function handleSend() {
+  const text = textarea.value.trim();
+  if (!text) return;
+
+  addUserMessage(text);
+  pushHistory("user", text);
+  userTurnCount += 1;
+  updateCompleteGate();
+  textarea.value = "";
+
+  const done = showLoading();
+  let replyText;
+  try {
+    replyText = await sendToAI(history);
+  } catch (err) {
+    done();
+    addAiMessage("오류: " + err.message);
+    history.pop();
+    userTurnCount -= 1;
+    updateCompleteGate();
+    return;
+  }
+  done();
+  addAiMessage(replyText);
+  pushHistory("assistant", replyText);
+}
+
+sendBtn.addEventListener("click", handleSend);
+textarea.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    handleSend();
+  }
+});
+
+startNewChat();
+</script>
+</body>
+</html>
