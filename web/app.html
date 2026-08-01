@@ -57,10 +57,25 @@
   .complete-btn:disabled { background: #e5d9c3; color: #9c8a6a; cursor: not-allowed; }
 
   .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
-  .msg { max-width: 70%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-  .msg.user { align-self: flex-end; background: var(--gold-50); color: var(--gold-900); border-bottom-right-radius: 3px; }
+  .msg { max-width: 70%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.5; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--gold-50); color: var(--gold-900); border-bottom-right-radius: 3px; white-space: pre-wrap; }
   .msg.ai   { align-self: flex-start; background: #f5f5f5; color: #1a1a1a; border-bottom-left-radius: 3px; }
-  .msg.system { align-self: center; background: transparent; color: var(--text-muted); font-size: 12px; }
+  .msg.system { align-self: center; background: transparent; color: var(--text-muted); font-size: 12px; white-space: pre-wrap; }
+
+  /* 마크다운 렌더링 결과(web/markdown.js) — .msg.ai 안에서만 적용 */
+  .msg.ai p { margin: 0 0 8px; }
+  .msg.ai p:last-child { margin-bottom: 0; }
+  .msg.ai h3, .msg.ai h4, .msg.ai h5 { margin: 12px 0 6px; line-height: 1.3; }
+  .msg.ai h3:first-child, .msg.ai h4:first-child, .msg.ai h5:first-child { margin-top: 0; }
+  .msg.ai ul, .msg.ai ol { margin: 0 0 8px; padding-left: 20px; }
+  .msg.ai li { margin: 2px 0; }
+  .msg.ai code { background: rgba(0,0,0,.06); border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .msg.ai .md-code { background: #2b2b2b; color: #eee; border-radius: 8px; padding: 10px 12px; overflow-x: auto; margin: 0 0 8px; }
+  .msg.ai .md-code code { background: none; padding: 0; color: inherit; }
+  .msg.ai .md-table { border-collapse: collapse; margin: 0 0 8px; font-size: 13px; }
+  .msg.ai .md-table th, .msg.ai .md-table td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; }
+  .msg.ai details { margin: 4px 0; }
+  .msg.ai summary { cursor: pointer; color: var(--gold-800); font-size: 13px; }
 
   .composer { border-top: 0.5px solid var(--border); padding: 12px 16px; }
   .input-row { display: flex; gap: 8px; align-items: flex-end; }
@@ -212,6 +227,7 @@
   </div>
 </div>
 
+<script src="markdown.js"></script>
 <script>
 // 중계 서버(server/index.js)에 직접 붙는다. API 키는 여기에 없다 — 서버에만 있다.
 const RELAY_URL = "http://localhost:8787/ask";
@@ -490,7 +506,7 @@ function addUserMessage(text) {
 function addAiMessage(text) {
   const div = document.createElement("div");
   div.className = "msg ai";
-  div.textContent = text;
+  div.innerHTML = renderMarkdown(text); // renderMarkdown이 전체를 이스케이프한 뒤 허용 문법만 되살린다
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
