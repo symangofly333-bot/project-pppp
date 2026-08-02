@@ -32,6 +32,15 @@
   .more-items { display:none; flex-direction:column; gap:2px; padding-left:6px; }
   .sidebar-spacer { flex: 1; }
 
+  .recent-label { padding: 12px 10px 4px; color: var(--text-muted); font-size: 12px; }
+  .recent-list { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; }
+  .recent-item {
+    padding: 7px 10px; border-radius: var(--radius); color: var(--text-secondary); cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px;
+  }
+  .recent-item:hover { background: #f5f5f5; }
+  .recent-item.active { background: var(--gold-50); color: var(--gold-900); }
+
   /* ── 메인 영역 ── */
   .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
@@ -158,18 +167,19 @@
 <div class="shell">
   <div class="sidebar">
     <div class="brand">COPEN</div>
-    <div class="nav-item active" id="navChat">New chat</div>
-    <div class="nav-item" id="navPopup">Popup AI</div>
+    <div class="nav-item active" id="navChat">새 대화</div>
+    <div class="nav-item" id="navPopup">팝업 AI</div>
 
     <div class="more-toggle" id="moreToggle">
       <span class="more-chevron" id="moreChevron">›</span>
-      <span>More</span>
+      <span>더보기</span>
     </div>
     <div class="more-items" id="moreItems">
-      <div class="nav-item" id="navMissions">Missions</div>
-      <div class="nav-item" style="color:var(--text-muted);cursor:default;">Find AI tools</div>
-      <div class="nav-item" style="color:var(--text-muted);cursor:default;">Shop</div>
+      <div class="nav-item" id="navMissions">미션</div>
     </div>
+
+    <div class="recent-label">최근</div>
+    <div class="recent-list" id="recentList"></div>
 
     <div class="sidebar-spacer"></div>
   </div>
@@ -292,10 +302,29 @@ const messagesEl = document.getElementById("messages");
 const composerEl = document.getElementById("composer");
 const textarea = document.getElementById("textarea");
 const sendBtn = document.getElementById("sendBtn");
+const recentListEl = document.getElementById("recentList");
 
-let history = [];
-let activeMission = null; // MISSIONS 항목 중 하나 또는 null
-let missionChecked = [];  // activeMission.checklist와 같은 길이의 boolean 배열
+// ── 대화 세션 ────────────────────────────────────────────────────────────
+// 세션 중에만 유지 — 새로고침하면 전부 사라진다(PROJECT.md 4절 "저장소는 마지막 Phase만"과
+// 같은 원칙, DB/계정 없이도 지킬 수 있다). 세션 하나 = { id, title, history(API 형식),
+// transcript(화면 재구성용), mission(진행 중인 미션 또는 null), missionChecked }.
+let sessions = [];
+let activeSession = null;
+let sessionIdCounter = 0;
+
+function createSession(kind, mission) {
+  const session = {
+    id: ++sessionIdCounter,
+    kind, // "free" | "mission"
+    title: kind === "mission" ? mission.title : "새 대화",
+    history: [],      // Claude에 보내는 {role, content}[] 형식
+    transcript: [],   // 화면 재구성용 {kind:"user"|"ai"|"system", text}[]
+    mission: mission || null,
+    missionChecked: mission ? mission.checklist.map(() => false) : [],
+  };
+  sessions.unshift(session);
+  return session;
+}
 
 // ── 뷰 전환 ──────────────────────────────────────────────────────────────
 // 세 뷰(채팅/미션/팝업 AI 안내)는 항상 하나만 보인다.
@@ -304,11 +333,18 @@ function setActiveNav(active) {
   navMissions.classList.toggle("active", active === "missions");
   navPopup.classList.toggle("active", active === "popup");
 }
+// "새 대화" 메뉴는 정말 빈 새 대화일 때만 강조한다. 미션이나 Recent의 다른 대화를 보는
+// 중에는 그 항목 자체가 강조되므로(renderRecentList), 여기선 둘 다 꺼서 헷갈리지 않게 한다.
+// 화면 전환 때뿐 아니라, 화면은 그대로인데 상태만 바뀌는 시점(첫 메시지 전송 등)에도 불러야 한다.
+function refreshNavHighlight() {
+  const onBlankNewChat = activeSession && activeSession.kind === "free" && activeSession.transcript.length === 0;
+  setActiveNav(onBlankNewChat ? "chat" : null);
+}
 function showChatView() {
   chatView.style.display = "flex";
   missionsView.classList.remove("active");
   popupIntroView.classList.remove("active");
-  setActiveNav("chat");
+  refreshNavHighlight();
 }
 function showMissionsView() {
   chatView.style.display = "none";
@@ -414,31 +450,32 @@ allMissionsToggle.addEventListener("click", () => {
 
 // ── 미션 진행 ────────────────────────────────────────────────────────────
 function startMission(mission) {
-  startNewChat(); // activeMission을 null로 되돌리므로, 미션 지정은 반드시 이 다음에 한다
-  activeMission = mission;
-  missionChecked = mission.checklist.map(() => false);
-  renderMissionBanner();
-  addSystemMessage(`"${mission.title}" 미션을 시작했어요. 평소처럼 AI와 대화하면서 진행해보세요.`);
+  activeSession = createSession("mission", mission);
+  messagesEl.innerHTML = "";
   hideLanding(); // 미션은 목표가 이미 있으므로 "무엇을 도와드릴까요" 랜딩을 안 보여준다
+  logAndRender(activeSession, "system", `"${mission.title}" 미션을 시작했어요. 평소처럼 AI와 대화하면서 진행해보세요.`);
+  renderMissionBanner();
+  renderRecentList();
   showChatView();
 }
 
 function renderMissionBanner() {
-  if (!activeMission) {
+  const mission = activeSession && activeSession.mission;
+  if (!mission) {
     missionBanner.classList.remove("active");
     return;
   }
   missionBanner.classList.add("active");
-  missionTitleEl.textContent = activeMission.title;
+  missionTitleEl.textContent = mission.title;
   missionChecklistEl.innerHTML = "";
-  activeMission.checklist.forEach((item, i) => {
+  mission.checklist.forEach((item, i) => {
     const label = document.createElement("label");
     label.className = "check-item";
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.checked = missionChecked[i];
+    cb.checked = activeSession.missionChecked[i];
     cb.addEventListener("change", () => {
-      missionChecked[i] = cb.checked;
+      activeSession.missionChecked[i] = cb.checked;
       updateCompleteGate();
     });
     label.appendChild(cb);
@@ -451,8 +488,9 @@ function renderMissionBanner() {
 // 판정은 여기서도 "체크박스 몇 개가 켜졌는지"만 본다. 항목이 실제로 잘 됐는지는
 // 시스템이 알 방법이 없고, 그건 사용자가 체크할 때 스스로 판단한 것이다.
 function updateCompleteGate() {
-  if (!activeMission) return;
-  const allChecked = missionChecked.every(Boolean);
+  const mission = activeSession && activeSession.mission;
+  if (!mission) return;
+  const allChecked = activeSession.missionChecked.every(Boolean);
   completeBtn.disabled = !allChecked;
   missionHintEl.textContent = allChecked
     ? "모두 확인했어요. 완료를 눌러주세요."
@@ -460,10 +498,11 @@ function updateCompleteGate() {
 }
 
 completeBtn.addEventListener("click", () => {
-  if (!activeMission || completeBtn.disabled) return;
-  completedMissionIds.add(activeMission.id);
-  addSystemMessage(`"${activeMission.title}" 미션을 완료했어요.`);
-  activeMission = null;
+  const mission = activeSession && activeSession.mission;
+  if (!mission || completeBtn.disabled) return;
+  completedMissionIds.add(mission.id);
+  logAndRender(activeSession, "system", `"${mission.title}" 미션을 완료했어요.`);
+  activeSession.mission = null;
   renderMissionBanner();
 });
 
@@ -479,21 +518,55 @@ function hideLanding() {
   composerEl.style.display = "block";
 }
 
+// "새 대화"를 눌렀을 때, 이미 빈 새 대화에 있으면 또 만들지 않고 그대로 둔다
+// (그렇지 않으면 아무것도 안 보내고 계속 눌러도 Recent 없는 빈 세션이 쌓인다).
 function startNewChat() {
-  history = [];
-  activeMission = null;
-  missionChecked = [];
+  if (!(activeSession && activeSession.kind === "free" && activeSession.transcript.length === 0)) {
+    activeSession = createSession("free");
+  }
   messagesEl.innerHTML = "";
   renderMissionBanner();
   showLanding(); // ChatGPT처럼 빈 대화는 안내 메시지 대신 가운데 입력창으로 시작한다
+  renderRecentList();
 }
 
-function pushHistory(role, content) {
-  history.push({ role, content });
-  if (history.length > HISTORY_LIMIT) {
-    const overflow = history.length - HISTORY_LIMIT;
-    history.splice(0, overflow + (overflow % 2));
+// 세션을 바꿔서 그 세션의 기록을 화면에 다시 그린다.
+function switchToSession(session) {
+  activeSession = session;
+  messagesEl.innerHTML = "";
+  session.transcript.forEach(renderTranscriptEntry);
+  if (session.transcript.length === 0) showLanding(); else hideLanding();
+  renderMissionBanner();
+  renderRecentList();
+  showChatView();
+}
+
+// 사이드바 "최근" 목록 — 메시지가 하나라도 있는 세션만 보여준다(빈 세션은 목록에 안 남김).
+function renderRecentList() {
+  recentListEl.innerHTML = "";
+  for (const session of sessions) {
+    if (session.transcript.length === 0) continue;
+    const item = document.createElement("div");
+    item.className = "recent-item" + (session === activeSession ? " active" : "");
+    item.textContent = session.title;
+    item.title = session.title;
+    item.addEventListener("click", () => switchToSession(session));
+    recentListEl.appendChild(item);
   }
+}
+
+function renderTranscriptEntry(entry) {
+  if (entry.kind === "user") addUserMessage(entry.text);
+  else if (entry.kind === "ai") addAiMessage(entry.text);
+  else addSystemMessage(entry.text);
+}
+
+// 세션 기록에 남기고, 그 세션이 지금 화면에 떠 있을 때만 실제로 그린다.
+// (응답을 기다리는 동안 사용자가 다른 세션으로 옮겨갔을 수 있어, 엉뚱한 화면에
+// 답이 끼어드는 것을 막는다 — 기록 자체는 그 세션으로 돌아왔을 때 그대로 보인다.)
+function logAndRender(session, kind, text) {
+  session.transcript.push({ kind, text });
+  if (session === activeSession) renderTranscriptEntry({ kind, text });
 }
 
 function addUserMessage(text) {
@@ -541,26 +614,39 @@ function sendToAI(messages) {
 async function handleSend(rawText) {
   const text = (rawText ?? textarea.value).trim();
   if (!text) return;
+  if (!activeSession) activeSession = createSession("free");
+
+  if (activeSession.kind === "free" && activeSession.history.length === 0) {
+    activeSession.title = text.length > 24 ? text.slice(0, 24) + "…" : text;
+  }
 
   if (!landingEl.classList.contains("hidden")) hideLanding(); // 첫 메시지를 보내는 순간 랜딩을 접는다
-  addUserMessage(text);
-  pushHistory("user", text);
+  logAndRender(activeSession, "user", text);
+  activeSession.history.push({ role: "user", content: text });
+  if (activeSession.history.length > HISTORY_LIMIT) {
+    const overflow = activeSession.history.length - HISTORY_LIMIT;
+    activeSession.history.splice(0, overflow + (overflow % 2));
+  }
   textarea.value = "";
   landingInput.value = "";
+  renderRecentList();
+  refreshNavHighlight(); // 화면 전환 없이 "빈 새 대화"에서 벗어났으니 강조도 갱신해야 한다
 
+  const session = activeSession; // 응답이 오는 동안 사용자가 다른 세션으로 옮겨갈 수 있어 고정해둔다
   const done = showLoading();
   let replyText;
   try {
-    replyText = await sendToAI(history);
+    replyText = await sendToAI(session.history);
   } catch (err) {
-    done();
-    addAiMessage("오류: " + err.message);
-    history.pop();
+    if (session === activeSession) done();
+    logAndRender(session, "ai", "오류: " + err.message);
+    session.history.pop();
     return;
   }
-  done();
-  addAiMessage(replyText);
-  pushHistory("assistant", replyText);
+  if (session === activeSession) done();
+  logAndRender(session, "ai", replyText);
+  session.history.push({ role: "assistant", content: replyText });
+  if (session === activeSession) renderRecentList(); // 제목이 막 정해졌을 수 있어 갱신
 }
 
 sendBtn.addEventListener("click", () => handleSend());
