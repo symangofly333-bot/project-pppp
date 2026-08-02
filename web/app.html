@@ -52,11 +52,21 @@
     padding: 12px 20px;
   }
   .mission-banner.active { display: flex; }
+  .mission-banner .heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
   .mission-banner .label { font-size: 11px; color: var(--gold-800); font-weight: 600; letter-spacing: .03em; }
   .mission-banner .title { font-size: 14px; font-weight: 600; color: var(--gold-900); }
+  .mission-banner .progress { font-size: 12px; color: var(--gold-800); white-space: nowrap; }
   .mission-banner .checklist { font-size: 13px; color: var(--gold-800); }
-  .mission-banner .check-item { display: flex; align-items: center; gap: 8px; padding: 2px 0; cursor: pointer; }
+  .mission-banner .check-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
   .mission-banner .check-item input { accent-color: var(--gold-200); width: 15px; height: 15px; cursor: pointer; }
+  .mission-banner .step-status { width: 15px; text-align: center; font-size: 13px; font-weight: 700; }
+  .mission-banner .step-done { text-decoration: line-through; opacity: .65; }
+  .mission-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:2px; }
+  .mission-action-btn {
+    border: 0.5px solid var(--gold-200); border-radius: 8px; padding: 7px 12px;
+    background:#fff; color:var(--gold-900); font-size:12px; font-weight:600; cursor:pointer;
+  }
+  .mission-action-note { font-size:11px; color:var(--gold-800); opacity:.8; }
   .mission-banner .row { display:flex; align-items:center; justify-content: space-between; gap: 12px; margin-top: 4px; }
   .mission-banner .hint { font-size: 12px; color: var(--gold-800); opacity: .8; }
   .complete-btn {
@@ -160,6 +170,11 @@
     padding: 5px 12px; cursor: pointer; background: #fff;
   }
   .chip:hover { background: #f5f5f5; }
+  .landing-mission {
+    margin-top:22px; border:none; background:transparent; color:var(--gold-800);
+    font-size:13px; cursor:pointer; padding:6px 10px;
+  }
+  .landing-mission:hover { text-decoration:underline; }
 </style>
 </head>
 <body>
@@ -187,9 +202,15 @@
   <div class="main">
     <div class="chat-view" id="chatView">
       <div class="mission-banner" id="missionBanner">
-        <span class="label">진행 중</span>
-        <span class="title" id="missionTitle"></span>
+        <div class="heading">
+          <div>
+            <div class="label">진행 중</div>
+            <div class="title" id="missionTitle"></div>
+          </div>
+          <span class="progress" id="missionProgress"></span>
+        </div>
         <div class="checklist" id="missionChecklist"></div>
+        <div class="mission-actions" id="missionActions"></div>
         <div class="row">
           <span class="hint" id="missionHint"></span>
           <button class="complete-btn" id="completeBtn" disabled>완료</button>
@@ -206,6 +227,7 @@
           <span class="chip" data-prompt="이 글 요약해줘">이 글 요약해줘</span>
           <span class="chip" data-prompt="이거 사실이야?">이거 사실이야?</span>
         </div>
+        <button class="landing-mission" id="landingMissionBtn"></button>
       </div>
 
       <div class="messages" id="messages" style="display:none;"></div>
@@ -229,8 +251,8 @@
       <h1>Popup AI</h1>
       <p class="sub">
         화면 아무 곳이나 캡처(Win+Shift+S)해서 물어볼 수 있는 코딩 도우미예요.
-        버튼을 누르면 별도의 창으로 열려서, 이 창과 별개로 화면 어디로든 자유롭게 옮기거나
-        다른 프로그램 위에 띄워둘 수 있습니다.
+        버튼을 누르면 별도의 브라우저 창으로 열려서 자유롭게 옮길 수 있습니다.
+        다만 일반 웹 기술만으로 다른 프로그램 위에 항상 고정할 수는 없습니다.
       </p>
       <button class="start-btn" id="openPopupBtn">팝업으로 열기</button>
     </div>
@@ -247,27 +269,72 @@ const HISTORY_LIMIT = 10; // 배우기용 AI와 같은 자르기 규칙(server/a
 // PROJECT.md "미션 구성" / 이 세션에서 정리한 판정 원칙:
 //   - AI는 미션 진행도를 모른다(4-1). 정규식/키워드로 "이건 수정 요청이다"류 의미 판정도 안 한다.
 //   - 대화 턴 수 같은 대리 지표도 안 쓴다 — 아무 말이나 두 번 보내면 뚫리는 가짜 게이트였다.
-//   - 완료 버튼은 체크리스트 항목을 사용자가 전부 직접 체크했을 때만 활성화된다. 판단 주체는
-//     끝까지 사용자다. 시스템은 "몇 개를 체크했는지"만 센다 — 그것도 의미 판단은 아니다.
+//   - 시스템은 준비 버튼을 거쳐 실제 질문을 보냈는지, AI 응답을 받았는지만 기록한다.
+//     결과가 충분한지는 마지막 confirm 단계에서 사용자가 직접 확인한다.
 //   - 미션이 늘어나도 이 배열에 항목만 추가하면 된다 — 판정 코드는 공유된다.
 const MISSIONS = [
   {
     id: "catch-wrong-answer",
     title: "AI의 틀린 답 잡아내기",
     description: "AI 답변에서 의심되는 부분을 짚고, 출처나 재확인을 요청해보세요.",
-    checklist: ["의심되는 부분 짚어보기", "출처나 재확인 요청하기"],
+    steps: [
+      {
+        id: "first-question",
+        kind: "prompt",
+        label: "검증할 답변 받아보기",
+        button: "시작 질문 준비",
+        prompt: "스마트폰 배터리는 매번 0%까지 다 쓴 뒤 충전해야 수명이 길어진다는 말이 사실이야? 초보자도 이해하게 설명해줘.",
+      },
+      { id: "first-answer", kind: "reply", label: "AI 답변 받기" },
+      {
+        id: "verify-question",
+        kind: "prompt",
+        label: "의심되는 부분과 출처 재확인 요청하기",
+        button: "재확인 질문 준비",
+        prompt: "방금 답변에서 확실하지 않거나 상황에 따라 달라질 수 있는 부분을 표시하고, 확인할 수 있는 신뢰할 만한 출처도 알려줘.",
+      },
+      { id: "review-result", kind: "confirm", label: "답변과 출처를 직접 확인했어요" },
+    ],
   },
   {
     id: "plan-with-conditions",
     title: "내 조건에 맞는 메뉴·일정 만들기",
     description: "예산·시간·취향 같은 조건을 넣어서 나만의 계획을 받아보세요.",
-    checklist: ["조건(예산·시간 등) 넣어 요청하기"],
+    steps: [
+      {
+        id: "condition-question",
+        kind: "prompt",
+        label: "내 조건을 넣어 계획 요청하기",
+        button: "조건 입력 틀 준비",
+        prompt: "예산 [금액], 가능한 시간 [시간], 좋아하는 것 [취향], 피하고 싶은 것 [조건]을 반영해서 오늘의 메뉴와 일정을 짜줘.",
+      },
+      { id: "condition-answer", kind: "reply", label: "맞춤 계획 받기" },
+      { id: "review-plan", kind: "confirm", label: "내 조건이 결과에 반영됐는지 확인했어요" },
+    ],
   },
   {
     id: "polish-message",
     title: "보내기 어려운 문장 다듬기",
     description: "실제 문자나 이메일 문장을 붙여넣고, 최소 한 번 수정을 요청해보세요.",
-    checklist: ["원문 붙여넣기", "최소 한 번 수정 요청하기"],
+    steps: [
+      {
+        id: "original-message",
+        kind: "prompt",
+        label: "원문을 넣어 첫 수정 요청하기",
+        button: "원문 입력 틀 준비",
+        prompt: "아래 문장을 [친구/직장 동료/고객]에게 보내기 좋게 자연스럽게 다듬어줘.\n\n원문: [여기에 문장 입력]",
+      },
+      { id: "first-rewrite", kind: "reply", label: "첫 번째 수정안 받기" },
+      {
+        id: "second-request",
+        kind: "prompt",
+        label: "원하는 방향으로 한 번 더 수정 요청하기",
+        button: "후속 수정 요청 준비",
+        prompt: "방금 문장을 의미는 유지하면서 더 짧고 자연스럽게 다시 써줘.",
+      },
+      { id: "second-rewrite", kind: "reply", label: "두 번째 수정안 받기" },
+      { id: "choose-message", kind: "confirm", label: "실제로 보낼 문장을 골랐어요" },
+    ],
   },
 ];
 
@@ -291,7 +358,9 @@ const openPopupBtn = document.getElementById("openPopupBtn");
 
 const missionBanner = document.getElementById("missionBanner");
 const missionTitleEl = document.getElementById("missionTitle");
+const missionProgressEl = document.getElementById("missionProgress");
 const missionChecklistEl = document.getElementById("missionChecklist");
+const missionActionsEl = document.getElementById("missionActions");
 const missionHintEl = document.getElementById("missionHint");
 const completeBtn = document.getElementById("completeBtn");
 
@@ -303,11 +372,12 @@ const composerEl = document.getElementById("composer");
 const textarea = document.getElementById("textarea");
 const sendBtn = document.getElementById("sendBtn");
 const recentListEl = document.getElementById("recentList");
+const landingMissionBtn = document.getElementById("landingMissionBtn");
 
 // ── 대화 세션 ────────────────────────────────────────────────────────────
 // 세션 중에만 유지 — 새로고침하면 전부 사라진다(PROJECT.md 4절 "저장소는 마지막 Phase만"과
 // 같은 원칙, DB/계정 없이도 지킬 수 있다). 세션 하나 = { id, title, history(API 형식),
-// transcript(화면 재구성용), mission(진행 중인 미션 또는 null), missionChecked }.
+// transcript(화면 재구성용), mission(진행 중인 미션 또는 null), missionSteps }.
 let sessions = [];
 let activeSession = null;
 let sessionIdCounter = 0;
@@ -320,7 +390,8 @@ function createSession(kind, mission) {
     history: [],      // Claude에 보내는 {role, content}[] 형식
     transcript: [],   // 화면 재구성용 {kind:"user"|"ai"|"system", text}[]
     mission: mission || null,
-    missionChecked: mission ? mission.checklist.map(() => false) : [],
+    missionSteps: mission ? Object.fromEntries(mission.steps.map((step) => [step.id, false])) : {},
+    pendingMissionStepId: null,
   };
   sessions.unshift(session);
   return session;
@@ -407,7 +478,7 @@ function buildMissionCard(mission) {
 
 function renderRecommendedMission() {
   missionRecommendEl.innerHTML = "";
-  const next = MISSIONS.find((m) => !completedMissionIds.has(m.id));
+  const next = getRecommendedMission();
   if (!next) {
     missionRecommendEl.innerHTML = `
       <div class="recommend-card">
@@ -432,6 +503,21 @@ function renderRecommendedMission() {
   missionRecommendEl.appendChild(card);
 }
 
+function getRecommendedMission() {
+  return MISSIONS.find((mission) => !completedMissionIds.has(mission.id)) || null;
+}
+
+function renderLandingMission() {
+  const mission = getRecommendedMission();
+  if (!mission) {
+    landingMissionBtn.style.display = "none";
+    return;
+  }
+  landingMissionBtn.style.display = "block";
+  landingMissionBtn.textContent = `추천 미션 시작 · ${mission.title} ›`;
+  landingMissionBtn.onclick = () => startMission(mission);
+}
+
 function renderMissionList() {
   renderRecommendedMission();
   missionListEl.style.display = "none";
@@ -453,7 +539,7 @@ function startMission(mission) {
   activeSession = createSession("mission", mission);
   messagesEl.innerHTML = "";
   hideLanding(); // 미션은 목표가 이미 있으므로 "무엇을 도와드릴까요" 랜딩을 안 보여준다
-  logAndRender(activeSession, "system", `"${mission.title}" 미션을 시작했어요. 평소처럼 AI와 대화하면서 진행해보세요.`);
+  logAndRender(activeSession, "system", `"${mission.title}" 미션을 시작했어요. 위 안내의 첫 버튼으로 질문을 준비한 뒤 자유롭게 고쳐서 보내세요.`);
   renderMissionBanner();
   renderRecentList();
   showChatView();
@@ -468,33 +554,104 @@ function renderMissionBanner() {
   missionBanner.classList.add("active");
   missionTitleEl.textContent = mission.title;
   missionChecklistEl.innerHTML = "";
-  mission.checklist.forEach((item, i) => {
+  mission.steps.forEach((step) => {
     const label = document.createElement("label");
     label.className = "check-item";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = activeSession.missionChecked[i];
-    cb.addEventListener("change", () => {
-      activeSession.missionChecked[i] = cb.checked;
-      updateCompleteGate();
-    });
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(item));
+    const done = activeSession.missionSteps[step.id];
+    if (step.kind === "confirm") {
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = done;
+      const previousSteps = mission.steps.slice(0, mission.steps.indexOf(step));
+      cb.disabled = !previousSteps.every((item) => activeSession.missionSteps[item.id]);
+      cb.addEventListener("change", () => {
+        activeSession.missionSteps[step.id] = cb.checked;
+        renderMissionBanner();
+      });
+      label.appendChild(cb);
+    } else {
+      const status = document.createElement("span");
+      status.className = "step-status";
+      status.textContent = done ? "✓" : "○";
+      label.appendChild(status);
+    }
+    const text = document.createElement("span");
+    text.textContent = step.label;
+    if (done) text.className = "step-done";
+    label.appendChild(text);
     missionChecklistEl.appendChild(label);
   });
+  renderMissionAction();
   updateCompleteGate();
 }
 
-// 판정은 여기서도 "체크박스 몇 개가 켜졌는지"만 본다. 항목이 실제로 잘 됐는지는
-// 시스템이 알 방법이 없고, 그건 사용자가 체크할 때 스스로 판단한 것이다.
+function nextMissionStep(kind) {
+  const mission = activeSession && activeSession.mission;
+  if (!mission) return null;
+  return mission.steps.find((step) => step.kind === kind && !activeSession.missionSteps[step.id]) || null;
+}
+
+function renderMissionAction() {
+  missionActionsEl.innerHTML = "";
+  const step = nextMissionStep("prompt");
+  if (!step) return;
+
+  const previousSteps = activeSession.mission.steps.slice(0, activeSession.mission.steps.indexOf(step));
+  if (!previousSteps.every((item) => activeSession.missionSteps[item.id])) return;
+
+  const button = document.createElement("button");
+  button.className = "mission-action-btn";
+  button.textContent = step.button;
+  button.addEventListener("click", () => {
+    textarea.value = step.prompt;
+    activeSession.pendingMissionStepId = step.id;
+    textarea.focus();
+    renderMissionAction();
+  });
+  missionActionsEl.appendChild(button);
+
+  const note = document.createElement("span");
+  note.className = "mission-action-note";
+  note.textContent = activeSession.pendingMissionStepId === step.id
+    ? "입력창에서 내용을 자유롭게 고친 뒤 보내세요."
+    : "예시를 불러온 뒤 내 상황에 맞게 고칠 수 있어요.";
+  missionActionsEl.appendChild(note);
+}
+
+function recordMissionPrompt(session) {
+  if (!session.mission || !session.pendingMissionStepId) return null;
+  const stepId = session.pendingMissionStepId;
+  session.missionSteps[stepId] = true;
+  session.pendingMissionStepId = null;
+  return stepId;
+}
+
+function recordMissionReply(session) {
+  if (!session.mission) return;
+  const step = nextMissionStepForSession(session, "reply");
+  if (step) session.missionSteps[step.id] = true;
+}
+
+function nextMissionStepForSession(session, kind) {
+  if (!session.mission) return null;
+  return session.mission.steps.find((step) => {
+    if (step.kind !== kind || session.missionSteps[step.id]) return false;
+    const previousSteps = session.mission.steps.slice(0, session.mission.steps.indexOf(step));
+    return previousSteps.every((item) => session.missionSteps[item.id]);
+  }) || null;
+}
+
+// 전송·응답처럼 확실한 사건은 시스템이 기록하고, 결과 품질은 confirm 단계에서 사용자가 판단한다.
 function updateCompleteGate() {
   const mission = activeSession && activeSession.mission;
   if (!mission) return;
-  const allChecked = activeSession.missionChecked.every(Boolean);
+  const completed = mission.steps.filter((step) => activeSession.missionSteps[step.id]).length;
+  const allChecked = completed === mission.steps.length;
+  missionProgressEl.textContent = `${completed} / ${mission.steps.length}`;
   completeBtn.disabled = !allChecked;
   missionHintEl.textContent = allChecked
     ? "모두 확인했어요. 완료를 눌러주세요."
-    : "위 항목을 직접 해보고 하나씩 체크해주세요.";
+    : "동그라미 단계는 실제 행동 후 자동으로 완료돼요.";
 }
 
 completeBtn.addEventListener("click", () => {
@@ -504,6 +661,7 @@ completeBtn.addEventListener("click", () => {
   logAndRender(activeSession, "system", `"${mission.title}" 미션을 완료했어요.`);
   activeSession.mission = null;
   renderMissionBanner();
+  renderLandingMission();
 });
 
 // ── 채팅 / 랜딩 ────────────────────────────────────────────────────────────
@@ -527,6 +685,7 @@ function startNewChat() {
   messagesEl.innerHTML = "";
   renderMissionBanner();
   showLanding(); // ChatGPT처럼 빈 대화는 안내 메시지 대신 가운데 입력창으로 시작한다
+  renderLandingMission();
   renderRecentList();
 }
 
@@ -623,6 +782,7 @@ async function handleSend(rawText) {
   if (!landingEl.classList.contains("hidden")) hideLanding(); // 첫 메시지를 보내는 순간 랜딩을 접는다
   logAndRender(activeSession, "user", text);
   activeSession.history.push({ role: "user", content: text });
+  const completedPromptStepId = recordMissionPrompt(activeSession);
   if (activeSession.history.length > HISTORY_LIMIT) {
     const overflow = activeSession.history.length - HISTORY_LIMIT;
     activeSession.history.splice(0, overflow + (overflow % 2));
@@ -631,6 +791,7 @@ async function handleSend(rawText) {
   landingInput.value = "";
   renderRecentList();
   refreshNavHighlight(); // 화면 전환 없이 "빈 새 대화"에서 벗어났으니 강조도 갱신해야 한다
+  if (activeSession.mission) renderMissionBanner();
 
   const session = activeSession; // 응답이 오는 동안 사용자가 다른 세션으로 옮겨갈 수 있어 고정해둔다
   const done = showLoading();
@@ -641,11 +802,18 @@ async function handleSend(rawText) {
     if (session === activeSession) done();
     logAndRender(session, "ai", "오류: " + err.message);
     session.history.pop();
+    if (completedPromptStepId && session.mission) {
+      session.missionSteps[completedPromptStepId] = false;
+      session.pendingMissionStepId = completedPromptStepId;
+      if (session === activeSession) renderMissionBanner();
+    }
     return;
   }
   if (session === activeSession) done();
   logAndRender(session, "ai", replyText);
   session.history.push({ role: "assistant", content: replyText });
+  recordMissionReply(session);
+  if (session === activeSession && session.mission) renderMissionBanner();
   if (session === activeSession) renderRecentList(); // 제목이 막 정해졌을 수 있어 갱신
 }
 
